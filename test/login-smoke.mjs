@@ -10,6 +10,7 @@
 
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import { CookieJar } from '../lib/http.js';
 import { login, LoginError, parseLoginForm } from '../lib/login.js';
 
 const GOOD_JWT = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ0ZXN0IiwibmFtZSI6IuW8oOS4iSIsImV4cCI6NDA3MDkwODgwMH0.c2ln';
@@ -18,6 +19,7 @@ const EXECUTION = 'e1s1';
 
 let mode = 'success';
 let lastPost = '';
+let lastPostPath = '';
 
 function readBody(req) {
   return new Promise((resolve) => {
@@ -43,11 +45,12 @@ const server = http.createServer(async (req, res) => {
     return;
   }
   if (path === '/cas/login' && req.method === 'GET') {
+    const action = mode === 'foreign-action' ? 'https://evil.example/cas/login' : '/cas/login?service=cb';
     // 故意在正文里塞一个 JWT 形状的字符串（真实登录页里就有类似物）
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
     res.end(`<html><body>
       <script>window.__CONFIG__ = {"token":"${FAKE_JWT}"}</script>
-      <form method="post" action="/cas/login?service=cb">
+      <form method="post" action="${action}">
         <input type="hidden" name="execution" value="${EXECUTION}">
         <input type="hidden" name="_eventId" value="">
         <input type="hidden" name="geolocation" value="">
@@ -57,6 +60,7 @@ const server = http.createServer(async (req, res) => {
   }
   if (path === '/cas/login' && req.method === 'POST') {
     lastPost = await readBody(req);
+    lastPostPath = path;
     const params = new URLSearchParams(lastPost);
     if (params.get('execution') !== EXECUTION) {
       res.writeHead(401, { 'content-type': 'text/html' });
@@ -134,7 +138,7 @@ async function main() {
 
   await check('正确密码能走完整条链并拿到已验证令牌', async () => {
     mode = 'success';
-    const result = await login({ username: '20230001', password: 'right-pw', site });
+    const result = await login({ username: '20230001', password: 'right-pw', site, trustedOrigins: [site] });
     assert.equal(result.token, GOOD_JWT);
     assert.equal(result.displayName, '张同学');
     assert.equal(result.reusedSession, false);
@@ -153,7 +157,7 @@ async function main() {
   await check('密码错误 → bad_credentials（不会把正文里的假 JWT 当令牌）', async () => {
     mode = 'success';
     await assert.rejects(
-      () => login({ username: '20230001', password: 'wrong-pw', site }),
+      () => login({ username: '20230001', password: 'wrong-pw', site, trustedOrigins: [site] }),
       (error) => {
         assert.ok(error instanceof LoginError);
         assert.equal(error.code, 'bad_credentials');
@@ -166,7 +170,7 @@ async function main() {
   await check('账号锁定 → locked', async () => {
     mode = 'locked';
     await assert.rejects(
-      () => login({ username: '20230001', password: 'right-pw', site }),
+      () => login({ username: '20230001', password: 'right-pw', site, trustedOrigins: [site] }),
       (error) => {
         assert.equal(error.code, 'locked');
         return true;
@@ -177,7 +181,7 @@ async function main() {
   await check('形状正确但学校不认的 token Cookie → 判失败而不是成功', async () => {
     mode = 'bogus-cookie';
     await assert.rejects(
-      () => login({ username: '20230001', password: 'right-pw', site }),
+      () => login({ username: '20230001', password: 'right-pw', site, trustedOrigins: [site] }),
       (error) => {
         assert.ok(error instanceof LoginError, '应当抛 LoginError，实际: ' + error);
         assert.notEqual(error.code, 'ok');
@@ -186,9 +190,46 @@ async function main() {
     );
   });
 
+  await check('登录页把密码表单指向校外时拒绝发送密码', async () => {
+    mode = 'foreign-action';
+    lastPost = '';
+    lastPostPath = '';
+    await assert.rejects(
+      () => login({ username: '20230001', password: 'right-pw', site, trustedOrigins: [site] }),
+      (error) => {
+        assert.ok(error instanceof LoginError, '应当是 LoginError，实际: ' + error);
+        assert.equal(error.code, 'unexpected_landing');
+        assert.match(error.message, /拒绝发送密码/);
+        return true;
+      },
+    );
+    assert.equal(lastPost, '', '被拒时不该有任何密码提交');
+    assert.equal(lastPostPath, '');
+    mode = 'success';
+  });
+
+  await check('Cookie 按域隔离：不会把学校 Cookie 发给别的主机', () => {
+    const jar = new CookieJar();
+    jar.absorb(
+      { headers: { 'set-cookie': ['token=abc; Path=/; HttpOnly', 'sid=1; Domain=hainnu.edu.cn; Path=/'] } },
+      'https://chat.hainnu.edu.cn/oauth/github/callback',
+    );
+    const schoolHeader = jar.header('https://chat.hainnu.edu.cn/oauth/github/callback');
+    assert.match(schoolHeader, /token=abc/);
+    assert.match(schoolHeader, /sid=1/);
+    // 父域 Cookie 跟着子域走，但别的域名一个都不给
+    assert.match(jar.header('https://auth.hainnu.edu.cn:9443/cas/login'), /sid=1/);
+    assert.doesNotMatch(jar.header('https://auth.hainnu.edu.cn:9443/cas/login'), /token=abc/);
+    assert.equal(jar.header('https://evil.example/'), '');
+    assert.equal(jar.get('token', 'https://evil.example/'), '');
+    // 服务端不能把 Cookie 种到别人的父域上
+    jar.absorb({ headers: { 'set-cookie': ['evil=1; Domain=example.com; Path=/'] } }, 'https://chat.hainnu.edu.cn/');
+    assert.equal(jar.header('https://evil.example/'), '');
+  });
+
   await check('空账号/空密码有明确错误', async () => {
-    await assert.rejects(() => login({ username: '', password: 'x', site }), (e) => e.code === 'missing_username');
-    await assert.rejects(() => login({ username: 'x', password: '', site }), (e) => e.code === 'missing_password');
+    await assert.rejects(() => login({ username: '', password: 'x', site, trustedOrigins: [site] }), (e) => e.code === 'missing_username');
+    await assert.rejects(() => login({ username: 'x', password: '', site, trustedOrigins: [site] }), (e) => e.code === 'missing_password');
   });
 
   server.close();

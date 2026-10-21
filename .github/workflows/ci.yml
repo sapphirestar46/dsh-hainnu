@@ -22,6 +22,7 @@ jobs:
         run: for f in index.js client.js lib/*.js; do node --check "$f"; done
       - name: 离线测试
         run: |
+          node test/guard-smoke.mjs
           node test/proxy-smoke.mjs
           node test/login-smoke.mjs
           node test/client-smoke.mjs

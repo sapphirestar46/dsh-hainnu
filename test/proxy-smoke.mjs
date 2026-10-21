@@ -151,6 +151,7 @@ async function main() {
   });
   const status = await proxy.start();
   assert.equal(status.mode, 'running');
+  assert.equal(status.auth, 'keys');
   // 以实际绑定端口为准（start() 可能在端口被抢时顺延）
   const proxyPort = status.port;
   const base = `http://127.0.0.1:${proxyPort}`;
@@ -200,6 +201,7 @@ async function main() {
     });
     const st = await closed.start();
     assert.equal(closed.authMode(), 'locked');
+    assert.equal(st.auth, 'locked');
     assert.equal(st.mode, 'running');
     const r = await fetchJson(`http://127.0.0.1:${st.port}/v1/models`);
     assert.equal(r.status, 401);

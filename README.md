@@ -150,6 +150,12 @@ curl http://127.0.0.1:9840/dsh-hainnu/status
 - **两个端口都只监听回环地址，但"只监听回环"挡不住浏览器**（DNS 重绑定能让任意网页变成同源）。
   所以插件路由和 8787 代理都会校验 `Host` / `Origin` / `Sec-Fetch-Site`：来源说不清就 403，
   伪造 `Host: evil.example.com`、跨站 `Origin`、`Origin: null` 都会被拒。
+- 密码**只准提交到学校自己的域名**：登录页里的 `<form action>` 必须落在
+  `auth.hainnu.edu.cn:9443` 或 `chat.hainnu.edu.cn` 的 https origin 上，否则直接报错、
+  一个字节的密码都不发出去（防门户被投毒/跳转被劫持把密码带去别处）。
+- Cookie 罐**按域隔离**：没带 `Domain` 的按 host-only 存，带了只接受"当前主机或它的父域"；
+  发给某一跳的 Cookie 必须和该 URL 的主机匹配。早期版本会把整罐 Cookie 发给任意跳转目标，
+  一次跨站重定向就能把学校会话 Cookie 带出去。令牌也只认门户主机种下的那一个。
 - 代理的本地 Key 校验**失败关闭**：一个 Key 都没配好时返回 401（而不是旧行为：直接放行）。
 - 登录有进程级限流：10 分钟内失败 3 次就整体冷却 10 分钟，手动和自动登录共用同一份预算，
   避免被人反复触发 `/login` 把学校账号刷到锁定。
@@ -161,8 +167,10 @@ curl http://127.0.0.1:9840/dsh-hainnu/status
 
 ```bash
 node test/proxy-smoke.mjs    # 假上游：鉴权/归一化/SSE/重试/401/health/端口接管
-node test/login-smoke.mjs    # 假 CAS：表单解析、令牌校验、密码错误、锁定、假 JWT 陷阱
+node test/guard-smoke.mjs    # 入口校验（Host/Origin/Sec-Fetch-Site）与登录限流
+node test/login-smoke.mjs    # 假 CAS：表单解析、令牌校验、密码错误、锁定、假 JWT 陷阱、校外 action
 node test/client-smoke.mjs   # 客户端模块契约：slot 注册形状、中文标签、样式表
+node test/store-smoke.mjs    # 落盘加密：密文不含明文、篡改解不开、publicState 脱敏
 node test/modelconfig-smoke.mjs  # 模型策略：压缩线公式、按模型覆盖、幂等、默认模型
 ```
 

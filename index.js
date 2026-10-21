@@ -332,6 +332,14 @@ export function apply(ctx, config) {
       writeConfig: settings.writeConfig,
       apiKeyEnv: settings.apiKeyEnv,
     },
+    // 安全面：鉴权模式、是否放开了远程、登录限流状态（面板「诊断」用）。
+    security: {
+      allowRemote: settings.allowRemote === true,
+      allowAnonymous: settings.allowAnonymous === true,
+      apiAuth: proxy.authMode(),
+      loginGuard: loginBudget.snapshot(),
+      originGuard: true,
+    },
     configNote,
     provider: (() => {
       try {

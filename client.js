@@ -292,6 +292,7 @@ window.__ModuleLoader__.load({
       const endpoint = status !== null && status.endpoint !== undefined ? status.endpoint : {};
       const settings = status !== null && status.settings !== undefined ? status.settings : {};
       const policy = status !== null && status.policy !== undefined ? status.policy : null;
+      const security = status !== null && status.security !== undefined ? status.security : null;
 
       const loggedIn = state.hasToken === true && Number(state.expiresAt) > Date.now();
       const loginBadge = loggedIn ? badge('已登录', 'ok') : state.hasToken === true ? badge('令牌已过期', 'warn') : badge('未登录', 'off');
@@ -440,6 +441,10 @@ window.__ModuleLoader__.load({
         jsx('div', { className: 'hn-models', key: 'ml', children: models.length === 0
           ? jsx('span', { className: 'hn-note', children: '还没有拿到模型列表，登录后可点「刷新模型」' })
           : models.map((id) => jsx('span', { className: 'hn-chip' + (id === activeModel ? ' on' : ''), children: id }, id)) }),
+        security !== null && security.apiAuth === 'locked'
+          ? jsx('div', { className: 'hn-alert err', key: 'locked', style: { marginTop: '10px' }, children:
+              '本地代理没有可用的 API Key，已拒绝所有调用。请在插件配置里设置 localApiKey（或显式 allowAnonymous: true）。' })
+          : null,
         proxy.lastError ? jsx('div', { className: 'hn-alert err', key: 'pe', style: { marginTop: '10px' }, children: '代理错误：' + String(proxy.lastError) }) : null,
       ] }));
 
@@ -474,6 +479,15 @@ window.__ModuleLoader__.load({
       if (state.lastError || state.configNote || settings.upstream) {
         const rows = [];
         if (settings.upstream) rows.push(['上游', jsx('span', { className: 'mono', children: String(settings.upstream) })]);
+        if (security !== null) {
+          rows.push(['本地鉴权', security.apiAuth === 'anonymous'
+            ? 'allowAnonymous（不校验）'
+            : security.apiAuth === 'locked' ? '未配置 Key（已拒绝）' : 'Key 校验']);
+          const guard = security.loginGuard !== null && security.loginGuard !== undefined ? security.loginGuard : {};
+          rows.push(['登录限流', guard.cooldown === true
+            ? `冷却中（约 ${Math.max(1, Math.ceil((Number(guard.cooldownSeconds) || 0) / 60))} 分钟）`
+            : `${Number(guard.failures) || 0}/${Number(guard.maxFailures) || 3} 次失败`]);
+        }
         if (state.lastLoginAt) rows.push(['上次登录', fmtTime(state.lastLoginAt)]);
         if (state.configAppliedAt) rows.push(['配置时间', fmtTime(state.configAppliedAt)]);
         if (state.configNote) rows.push(['配置结果', String(state.configNote)]);
