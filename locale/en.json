@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "HAINNU Account",
+    "description": "Signs in to the Hainan Normal University CAS portal, runs the HAINNU model proxy locally, and exposes deepseek-flash as a DSH model."
+  }
+}

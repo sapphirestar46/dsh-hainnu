@@ -1,0 +1,12 @@
+- insert:
+    - id: dsh-hainnu
+      name: dsh-hainnu
+      config:
+        port: 8787
+        upstream: https://chat.hainnu.edu.cn
+        localApiKey: sk-hainnu
+        providerId: hainnu
+        apiKeyEnv: HAINNU_API_KEY
+        autoStart: true
+        autoLogin: true
+        writeConfig: true

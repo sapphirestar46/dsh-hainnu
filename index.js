@@ -1,0 +1,528 @@
+/**
+ * dsh-hainnu —— 在 DSH 里登录海师（海南师范大学）账号，并把学校的
+ * Open WebUI 模型接成 DSH 的 provider。
+ *
+ * Host 半边只做三件事：
+ *   1. 在 /dsh-hainnu 上开一组 HTTP 接口，给左侧栏面板用；
+ *   2. 在 DSH 启动时把本地代理拉起来（默认 127.0.0.1:8787），
+ *      端口被旧项目那个 Python 代理占着就直接"接管"它，不抢端口；
+ *   3. 把 provider 配置写进 profile 的 cordis.patch.yml（幂等，改动才写）。
+ *
+ * 登录流程与旧项目 get_token.py 一致（CAS 表单 → token Cookie），
+ * 区别只是不再需要 Playwright：直接走同一条 HTTP 重定向链。
+ */
+
+import { ensureModelConfig, readCredential, readProviderSnapshot, DEFAULTS as PROVIDER_DEFAULTS } from './lib/modelconfig.js';
+import { HainnuProxy } from './lib/proxy.js';
+import { login as loginFlow, LoginError, fetchProfile } from './lib/login.js';
+import { jwtExpiry, loadState, publicState, readPassword, readToken, saveState, seal, unseal } from './lib/store.js';
+
+export const name = 'dsh-hainnu';
+
+export const inject = ['webServer'];
+
+const ROUTE_PREFIX = '/dsh-hainnu';
+const VERSION = '0.1.0';
+
+const DEFAULTS = {
+  host: '127.0.0.1',
+  port: 8787,
+  upstream: 'https://chat.hainnu.edu.cn',
+  localApiKey: 'sk-hainnu',
+  providerId: 'hainnu',
+  apiKeyEnv: 'HAINNU_API_KEY',
+  modelId: 'deepseek-flash',
+  autoStart: true,
+  autoLogin: true,
+  writeConfig: true,
+  profile: 'desktop',
+  verifySsl: true,
+};
+
+/** 自动登录的失败预算：学校连续 5 次密码错误会锁账号，这里留足余量。 */
+const MAX_AUTO_FAILURES = 2;
+const FAILURE_WINDOW_MS = 10 * 60 * 1000;
+
+function normalizeConfig(config) {
+  const raw = config !== null && typeof config === 'object' ? config : {};
+  const pick = (key, fallback) => (raw[key] === undefined || raw[key] === null ? fallback : raw[key]);
+  return {
+    host: String(pick('host', DEFAULTS.host)),
+    port: Number(pick('port', DEFAULTS.port)) || DEFAULTS.port,
+    upstream: String(pick('upstream', DEFAULTS.upstream)).replace(/\/+$/, ''),
+    localApiKey: String(pick('localApiKey', DEFAULTS.localApiKey)),
+    providerId: String(pick('providerId', DEFAULTS.providerId)),
+    apiKeyEnv: String(pick('apiKeyEnv', DEFAULTS.apiKeyEnv)),
+    modelId: String(pick('modelId', DEFAULTS.modelId)),
+    autoStart: pick('autoStart', DEFAULTS.autoStart) !== false,
+    autoLogin: pick('autoLogin', DEFAULTS.autoLogin) !== false,
+    writeConfig: pick('writeConfig', DEFAULTS.writeConfig) !== false,
+    profile: String(pick('profile', DEFAULTS.profile)),
+    verifySsl: pick('verifySsl', DEFAULTS.verifySsl) !== false,
+    aliases: raw.aliases !== null && typeof raw.aliases === 'object' ? raw.aliases : {},
+  };
+}
+
+function sendJson(res, status, value) {
+  const text = JSON.stringify(value);
+  res.writeHead(status, {
+    'content-type': 'application/json; charset=utf-8',
+    'content-length': Buffer.byteLength(text),
+    'cache-control': 'no-store',
+  });
+  res.end(text);
+}
+
+function readBody(req, limit = 512 * 1024) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let total = 0;
+    req.on('data', (chunk) => {
+      total += chunk.length;
+      if (total > limit) {
+        reject(new Error(`request body too large (>${limit} bytes)`));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    req.on('error', reject);
+  });
+}
+
+async function readJson(req) {
+  const text = await readBody(req);
+  if (text.trim() === '') return {};
+  try {
+    const value = JSON.parse(text);
+    return value !== null && typeof value === 'object' ? value : {};
+  } catch {
+    throw new Error('invalid json body');
+  }
+}
+
+function tokenUsable(state) {
+  if ((state.token || '') === '') return false;
+  const expiresAt = Number(state.expiresAt) || jwtExpiry(readToken(state));
+  if (expiresAt <= 0) return true;
+  return Date.now() < expiresAt - 60 * 1000;
+}
+
+export function apply(ctx, config) {
+  const settings = normalizeConfig(config);
+  const log = (level, message) => {
+    try {
+      const logger = ctx.logger;
+      if (logger !== null && logger !== undefined && typeof logger[level] === 'function') logger[level](message);
+    } catch {
+      /* 日志失败不能影响挂载 */
+    }
+  };
+
+  let state = loadState();
+  if (typeof state.autoLogin !== 'boolean') state.autoLogin = settings.autoLogin;
+  if (typeof state.autoStart !== 'boolean') state.autoStart = settings.autoStart;
+
+  const persist = () => {
+    try {
+      saveState(state);
+    } catch (error) {
+      log('warn', `${name}: 状态落盘失败: ${String(error)}`);
+    }
+  };
+
+  let loginPromise = null;
+  let configNote = '';
+
+  // 本地代理每个请求都要判断 Key，读凭据文件带 5 秒缓存，避免每请求一次磁盘 IO。
+  let keyCache = { at: 0, keys: [] };
+  const acceptKeys = () => {
+    const now = Date.now();
+    if (now - keyCache.at < 5000) return keyCache.keys;
+    const keys = [settings.localApiKey, readCredential(settings.apiKeyEnv)].filter(
+      (key) => typeof key === 'string' && key !== '',
+    );
+    keyCache = { at: now, keys: [...new Set(keys)] };
+    return keyCache.keys;
+  };
+
+  const proxy = new HainnuProxy({
+    host: settings.host,
+    port: settings.port,
+    upstream: settings.upstream,
+    modelId: settings.modelId,
+    verifySsl: settings.verifySsl,
+    aliases: settings.aliases,
+    acceptKeys,
+    getToken: () => {
+      if (!tokenUsable(state)) return '';
+      return readToken(state);
+    },
+    relogin: () => autoLogin('proxy-401'),
+  });
+
+  /** 真正的登录动作（含密码校验、落盘、刷新模型）。 */
+  const performLogin = async (input) => {
+    const username = String(input.username === undefined ? '' : input.username).trim();
+    const password = String(input.password === undefined ? '' : input.password);
+    const remember = input.remember !== false;
+    if (username === '') throw new LoginError('请填写学号/工号', { code: 'missing_username' });
+    if (password === '') throw new LoginError('请填写密码', { code: 'missing_password' });
+
+    const result = await loginFlow({
+      username,
+      password,
+      site: settings.upstream,
+      verifySsl: settings.verifySsl,
+    });
+
+    state.username = result.username;
+    state.displayName = result.displayName;
+    state.token = seal(result.token);
+    state.tokenAt = Date.now();
+    state.expiresAt = Number(result.expiresAt) || jwtExpiry(result.token);
+    state.lastLoginAt = Date.now();
+    state.lastError = '';
+    state.failCount = 0;
+    state.failAt = 0;
+    if (remember) state.secret = seal(password);
+    persist();
+
+    await proxy.refreshModels(true).catch(() => {});
+    const ids = proxy.modelCache.ids;
+    if (Array.isArray(ids) && ids.length > 0) {
+      state.models = ids;
+      persist();
+    }
+    log('info', `${name}: 登录成功（${result.displayName || result.username}）`);
+    return result;
+  };
+
+  /** 串行化登录，避免面板连点 / 启动自检和手动登录撞车（会浪费密码次数）。 */
+  const runLogin = (input) => {
+    if (loginPromise !== null) return loginPromise;
+    loginPromise = (async () => {
+      try {
+        return await performLogin(input);
+      } finally {
+        loginPromise = null;
+      }
+    })();
+    return loginPromise;
+  };
+
+  /**
+   * 后台自动登录。用已保存的密码；失败次数受限，避免把学校账号刷到锁定。
+   */
+  const autoLogin = async (reason) => {
+    const password = readPassword(state);
+    if (password === '' || state.username === '') {
+      state.lastError = '还没有保存账号密码';
+      persist();
+      return '';
+    }
+    const now = Date.now();
+    const failCount = Number(state.failCount) || 0;
+    const failAt = Number(state.failAt) || 0;
+    if (failCount >= MAX_AUTO_FAILURES && now - failAt < FAILURE_WINDOW_MS) {
+      state.lastError = `自动登录已暂停：最近连续失败 ${failCount} 次，请确认密码后在面板手动登录`;
+      persist();
+      return '';
+    }
+    try {
+      const result = await runLogin({ username: state.username, password, remember: false });
+      return result.token;
+    } catch (error) {
+      state.failCount = failCount + 1;
+      state.failAt = now;
+      state.lastError = error instanceof LoginError ? error.message : String(error.message || error);
+      persist();
+      log('warn', `${name}: 自动登录失败（${reason}）: ${state.lastError}`);
+      return '';
+    }
+  };
+
+  const applyConfig = async (options = {}) => {
+    if (settings.writeConfig === false) {
+      return { changed: false, notes: ['配置里关闭了 writeConfig'], problems: [] };
+    }
+    const result = ensureModelConfig({
+      profile: settings.profile,
+      providerId: settings.providerId,
+      apiKeyEnv: settings.apiKeyEnv,
+      apiKey: settings.localApiKey,
+      modelId: settings.modelId,
+      baseURL: proxy.baseURL,
+      dryRun: options.dryRun === true,
+    });
+    configNote = result.notes.join('；');
+    state.configAppliedAt = Date.now();
+    state.configNote = configNote;
+    persist();
+    if (result.problems.length > 0) {
+      log('warn', `${name}: 模型配置写入有问题: ${result.problems.join('; ')}`);
+    } else {
+      log('info', `${name}: 模型配置 ${result.changed ? '已更新' : '无需改动'}（${proxy.baseURL}）`);
+    }
+    return result;
+  };
+
+  const statusPayload = () => ({
+    ok: true,
+    version: VERSION,
+    endpoint: { baseURL: proxy.baseURL, apiKey: settings.localApiKey, providerId: settings.providerId, modelId: settings.modelId },
+    state: publicState(state),
+    proxy: proxy.status(),
+    settings: {
+      profile: settings.profile,
+      upstream: settings.upstream,
+      autoLogin: state.autoLogin !== false,
+      autoStart: state.autoStart !== false,
+      writeConfig: settings.writeConfig,
+      apiKeyEnv: settings.apiKeyEnv,
+    },
+    configNote,
+    provider: (() => {
+      try {
+        return readProviderSnapshot({ profile: settings.profile, providerId: settings.providerId });
+      } catch {
+        return null;
+      }
+    })(),
+  });
+
+  const handler = async (req, res) => {
+    let url;
+    try {
+      url = new URL(typeof req.url === 'string' ? req.url : '/', 'http://localhost');
+    } catch {
+      sendJson(res, 400, { ok: false, error: { code: 'bad_url', message: 'bad url' } });
+      return;
+    }
+    const route = url.pathname.startsWith(ROUTE_PREFIX) ? url.pathname.slice(ROUTE_PREFIX.length) || '/' : url.pathname;
+    const method = (req.method || 'GET').toUpperCase();
+
+    try {
+      if (route === '/status' && method === 'GET') {
+        sendJson(res, 200, statusPayload());
+        return;
+      }
+
+      if (route === '/login' && method === 'POST') {
+        const body = await readJson(req);
+        const password = String(body.password === undefined ? '' : body.password);
+        const useStored = password === '';
+        if (useStored) {
+          const stored = readPassword(state);
+          if (stored === '') {
+            sendJson(res, 400, { ok: false, error: { code: 'missing_password', message: '请填写密码' } });
+            return;
+          }
+          const result = await runLogin({ username: body.username || state.username, password: stored, remember: false });
+          sendJson(res, 200, { ok: true, displayName: result.displayName, status: statusPayload() });
+          return;
+        }
+        const result = await runLogin({
+          username: body.username || state.username,
+          password,
+          remember: body.remember !== false,
+        });
+        sendJson(res, 200, { ok: true, displayName: result.displayName, status: statusPayload() });
+        return;
+      }
+
+      if (route === '/save' && method === 'POST') {
+        const body = await readJson(req);
+        const nextName = String(body.username === undefined ? state.username : body.username).trim();
+        const nextPassword = String(body.password === undefined ? '' : body.password);
+        if (nextName === '') {
+          sendJson(res, 400, { ok: false, error: { code: 'missing_username', message: '请填写学号/工号' } });
+          return;
+        }
+        if (nextPassword === '') {
+          sendJson(res, 400, { ok: false, error: { code: 'missing_password', message: '请填写密码' } });
+          return;
+        }
+        state.username = nextName;
+        state.secret = seal(nextPassword);
+        state.lastError = '';
+        state.failCount = 0;
+        state.failAt = 0;
+        persist();
+        sendJson(res, 200, { ok: true, status: statusPayload() });
+        return;
+      }
+
+      if (route === '/logout' && method === 'POST') {
+        state.token = '';
+        state.expiresAt = 0;
+        state.lastError = '';
+        persist();
+        sendJson(res, 200, { ok: true, status: statusPayload() });
+        return;
+      }
+
+      if (route === '/forget' && method === 'POST') {
+        state.secret = '';
+        state.token = '';
+        state.expiresAt = 0;
+        state.failCount = 0;
+        state.failAt = 0;
+        state.lastError = '';
+        persist();
+        sendJson(res, 200, { ok: true, status: statusPayload() });
+        return;
+      }
+
+      if (route === '/proxy' && method === 'POST') {
+        const body = await readJson(req);
+        const action = String(body.action || 'restart');
+        if (action === 'start') await proxy.start();
+        else if (action === 'stop') await proxy.stop();
+        else await proxy.restart();
+        sendJson(res, 200, { ok: true, proxy: proxy.status(), status: statusPayload() });
+        return;
+      }
+
+      if (route === '/apply-config' && method === 'POST') {
+        const body = await readJson(req);
+        const result = await applyConfig({ dryRun: body.dryRun === true });
+        sendJson(res, 200, { ok: result.problems.length === 0, result, status: statusPayload() });
+        return;
+      }
+
+      if (route === '/refresh-models' && method === 'POST') {
+        const ids = await proxy.refreshModels(true);
+        state.models = ids;
+        persist();
+        sendJson(res, 200, { ok: true, models: ids, status: statusPayload() });
+        return;
+      }
+
+      if (route === '/settings' && method === 'POST') {
+        const body = await readJson(req);
+        if (typeof body.autoLogin === 'boolean') state.autoLogin = body.autoLogin;
+        if (typeof body.autoStart === 'boolean') state.autoStart = body.autoStart;
+        persist();
+        sendJson(res, 200, { ok: true, status: statusPayload() });
+        return;
+      }
+
+      if (route === '/models' && method === 'GET') {
+        const ids = proxy.modelCache.ids.length > 0 ? proxy.modelCache.ids : await proxy.refreshModels(true);
+        sendJson(res, 200, { ok: true, models: ids });
+        return;
+      }
+
+      sendJson(res, 404, { ok: false, error: { code: 'not_found', message: `unknown route ${route}` } });
+    } catch (error) {
+      if (error instanceof LoginError) {
+        state.lastError = error.message;
+        persist();
+        sendJson(res, 400, { ok: false, error: error.toJSON(), status: statusPayload() });
+        return;
+      }
+      log('warn', `${name}: ${route} 处理失败: ${String(error && error.message ? error.message : error)}`);
+      sendJson(res, 500, {
+        ok: false,
+        error: { code: 'internal_error', message: String(error && error.message ? error.message : error) },
+      });
+    }
+  };
+
+  const mount = () => {
+    const registration = ctx.webServer.register({ kind: 'prefix', path: ROUTE_PREFIX, handler });
+    return () => {
+      try {
+        if (typeof registration === 'function') registration();
+      } catch {
+        /* 已经销毁 */
+      }
+    };
+  };
+
+  try {
+    if (typeof ctx.effect === 'function') ctx.effect(mount, `${name}: HTTP surface`);
+    else mount();
+  } catch (error) {
+    log('warn', `${name}: 挂载 HTTP 面失败: ${String(error)}`);
+  }
+
+  try {
+    if (typeof ctx.on === 'function') {
+      ctx.on('dispose', () => {
+        proxy.stop().catch(() => {});
+      });
+    }
+  } catch {
+    /* dispose 钩子拿不到就算了 */
+  }
+
+  /* ------------------------------------------------------------ 启动自检 */
+
+  const boot = async () => {
+    // 1) 代理先起来（后面的 baseURL 要写实际端口）
+    if (settings.autoStart !== false && state.autoStart !== false) {
+      try {
+        const status = await proxy.start();
+        if (status.adopted) {
+          log('info', `${name}: 端口 ${status.port} 上已有兼容的海师代理，直接接管（不再另起进程）`);
+        } else if (status.mode === 'running') {
+          log('info', `${name}: 本地代理已启动 ${status.baseURL}`);
+        } else {
+          log('warn', `${name}: 本地代理启动失败: ${status.lastError}`);
+        }
+      } catch (error) {
+        log('warn', `${name}: 本地代理启动异常: ${String(error)}`);
+      }
+    }
+
+    // 2) 模型配置（幂等：已经正确就不写盘，避免无谓的 loader 重载）
+    try {
+      const result = await applyConfig();
+      if (result.problems.length > 0) {
+        log('warn', `${name}: 模型配置未写入: ${result.problems.join('; ')}`);
+      }
+    } catch (error) {
+      log('warn', `${name}: 模型配置写入异常: ${String(error)}`);
+    }
+
+    // 3) 需要的话自动登录一次
+    //    接管外部实例时不登录：那个实例自己有令牌，我们登录只会白白消耗学校的
+    //    "连续 5 次密码错误锁账号"额度。真需要时（外部实例退出、我们接管端口后
+    //    收到 401）会由 proxy 的 relogin 触发。
+    const adopted = proxy.status().adopted === true;
+    const shouldLogin =
+      !adopted &&
+      state.autoLogin !== false &&
+      settings.autoLogin !== false &&
+      !tokenUsable(state) &&
+      readPassword(state) !== '';
+    if (adopted) {
+      log('info', `${name}: 当前接管外部代理实例，跳过自动登录（省一次密码校验）`);
+    }
+    if (shouldLogin) {
+      const token = await autoLogin('boot');
+      if (token !== '') log('info', `${name}: 启动时自动登录成功`);
+    }
+  };
+
+  boot().catch((error) => log('warn', `${name}: 启动自检失败: ${String(error)}`));
+
+  log('info', `${name}: 已挂载 ${ROUTE_PREFIX}（代理 ${proxy.baseURL}，provider ${settings.providerId}/${settings.modelId}）`);
+}
+
+/** 离线测试面；Loader 只读 name / inject / apply。 */
+export const __internals = {
+  ROUTE_PREFIX,
+  VERSION,
+  DEFAULTS,
+  PROVIDER_DEFAULTS,
+  normalizeConfig,
+  tokenUsable,
+  sendJson,
+  readBody,
+  fetchProfile,
+  unseal,
+};

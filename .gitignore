@@ -1,0 +1,19 @@
+# 依赖（本插件没有依赖，安装了也会被忽略）
+node_modules/
+
+# 运行期状态：账号、密文令牌、日志 —— 永远不要提交
+state.json
+*.credentials.yaml
+token*.txt
+
+# 配置写入前的备份 / 临时文件
+*.bak-*
+*.tmp-*
+.cordis.patch.yml.tmp-*
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini

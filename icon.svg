@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="HAINNU account">
+  <defs>
+    <linearGradient id="hn-g" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2f6fed"/>
+      <stop offset="1" stop-color="#1b3f9e"/>
+    </linearGradient>
+  </defs>
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="url(#hn-g)"/>
+  <path d="M32 14 12 24l20 10 20-10-20-10Z" fill="#fff" opacity=".95"/>
+  <path d="M20 29v9.5c0 4 5.4 7 12 7s12-3 12-7V29" fill="none" stroke="#fff" stroke-width="3.4"
+        stroke-linecap="round" stroke-linejoin="round" opacity=".95"/>
+  <circle cx="46" cy="44" r="6.5" fill="#fff"/>
+  <path d="M43.4 44h5.2M46 41.4v5.2" stroke="#1b3f9e" stroke-width="2.2" stroke-linecap="round"/>
+</svg>

@@ -1,0 +1,9 @@
+# 统一换行，避免 Windows 上提交 CRLF 污染整份文件
+* text=auto eol=lf
+
+# 图标按文本处理，diff 可读
+*.svg text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.mjs text eol=lf
+*.js text eol=lf
