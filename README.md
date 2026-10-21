@@ -83,7 +83,7 @@ curl http://127.0.0.1:9840/dsh-hainnu/status
 | `autoStart` | `true` | DSH 启动时自动起代理 |
 | `autoLogin` | `true` | 启动时令牌不可用则用已存密码登录 |
 | `writeConfig` | `true` | 是否自动写模型配置 |
-| `contextWindow` | `300000` | 写进模型的上下文窗口（= 网关请求体上限，见下节） |
+| `contextWindow` | `320000` | 写进模型的上下文窗口（DSH 侧预算：压缩线 220,000 + 输出 96,000 + 余量 4,000） |
 | `maxTokens` | `96000` | 写进模型的输出上限（网关默认 32,768） |
 | `syncModelPolicy` | `false` | `true` 时把已有模型的 `contextWindow`/`maxTokens` 校正成上面的值 |
 | `syncCompaction` | `true` | 压缩线够低时自动写按模型的 `modelPolicies` 覆盖 |
@@ -93,12 +93,13 @@ curl http://127.0.0.1:9840/dsh-hainnu/status
 
 ## 模型策略（这条路由为什么特殊）
 
-学校网关（Open WebUI）对单次请求体有限制：**prompt + `max_tokens` ≤ 300,000**。
-所以这条模型不能照抄官方规格，插件会把这套参数一起写进 `cordis.patch.yml`：
+学校网关（Open WebUI）的真实限制：**单次请求体 ≤ 1 MiB**（超了直接 413），
+输入建议 ≤ 26 万 tokens、硬上限 288,000；模型本身 1M 上下文，输出官方上限 64k。
+这条路由不能照抄官方规格，插件会把下面这套参数一起写进 `cordis.patch.yml`：
 
 | 位置 | 键 | 值 | 为什么 |
 |---|---|---|---|
-| 模型 | `contextWindow` | `300000` | 网关请求体上限，不是模型能力（模型本身 1M 上下文） |
+| 模型 | `contextWindow` | `320000` | DSH 侧预算（220,000 压缩线 + 96,000 输出 + 4,000 余量），不是模型能力 |
 | 模型 | `maxTokens` | `96000` | 网关默认输出只有 32,768，不显式声明就白瞎 |
 | 模型 | `input` | `text, image` | 模型支持图片输入 |
 | 模型 | `reasoningEfforts` | `off: none` / `low: low` / `max: max` | 官方只有这三档 |
@@ -106,15 +107,15 @@ curl http://127.0.0.1:9840/dsh-hainnu/status
 | provider | `compat.maxTokensField` | `max_tokens` | 网关只认 `max_tokens` |
 | provider | `compat.supportsDeveloperRole` | `false` | 网关没有 developer 角色（插件代理也会把它转成 system） |
 | provider | `reasoning` | `max` | 默认思考强度 |
-| 压缩 | `compaction-basic.modelPolicies` | `headroomTokens: 461`、`maxTokens: 4000` | 见下 |
+| 压缩 | `compaction-basic.modelPolicies` | `headroomTokens: 4000`、`maxTokens: 4000` | 见下 |
 | 默认模型 | `agent-default-model` | `hainnu/deepseek-flash`、`reasoningEffort: max` | 新会话直接用海师 |
 
 压缩线为什么必须单独调：DSH 的触发阈值是
 `floor(min(W × 0.8, W − O − headroomTokens))`，`headroomTokens` 默认 65,536。
 
-- 默认值下：`min(240,000, 300,000 − 96,000 − 65,536)` = **138,464**，6.5 万可用上下文白扔。
-- 插件写入的按模型覆盖：`min(240,000, 300,000 − 96,000 − 461)` = **203,539**，
-  此时 prompt 203,539 + 输出 96,000 = 299,539 ≤ 300,000，正好贴住网关上限。
+- 默认值下：`min(256,000, 320,000 − 96,000 − 65,536)` = **158,464**，一半上下文白扔。
+- 插件写入的按模型覆盖：`min(256,000, 320,000 − 96,000 − 4,000)` = **220,000**，
+  触发时 prompt 220,000 仍在网关 288,000 的输入硬上限内；4,000 是留给消息封装的估算误差。
 
 写入范围刻意收紧：只写**按模型**的 `modelPolicies`（`provider: hainnu` + `model: deepseek-flash`），
 不改 preset 里全局的 `headroomTokens`（那会连带影响其它 provider）；已经够高、或已有本模型覆盖时一律不动。
