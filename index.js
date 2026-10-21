@@ -46,9 +46,9 @@ const DEFAULTS = {
   verifySsl: true,
   allowRemote: false,
   allowAnonymous: false,
-  // 模型策略：本地 dsh 里这条路由的特殊配置（窗口 320,000 / 输出 96,000 /
-  // 压缩线 220,000），插件会把它写进 profile 的 cordis.patch.yml。
-  contextWindow: 320000,
+  // 模型策略：本地 dsh 里这条路由的特殊配置（网关请求体上限 300,000 / 输出 96,000 /
+  // 压缩线 203,539），插件会把它写进 profile 的 cordis.patch.yml。
+  contextWindow: 300000,
   maxTokens: 96000,
   syncModelPolicy: false,
   syncCompaction: true,
