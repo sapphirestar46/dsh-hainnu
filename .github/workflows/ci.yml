@@ -25,3 +25,4 @@ jobs:
           node test/proxy-smoke.mjs
           node test/login-smoke.mjs
           node test/client-smoke.mjs
+          node test/modelconfig-smoke.mjs

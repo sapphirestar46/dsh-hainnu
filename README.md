@@ -83,6 +83,41 @@ curl http://127.0.0.1:9840/dsh-hainnu/status
 | `autoStart` | `true` | DSH 启动时自动起代理 |
 | `autoLogin` | `true` | 启动时令牌不可用则用已存密码登录 |
 | `writeConfig` | `true` | 是否自动写模型配置 |
+| `contextWindow` | `300000` | 写进模型的上下文窗口（= 网关请求体上限，见下节） |
+| `maxTokens` | `96000` | 写进模型的输出上限（网关默认 32,768） |
+| `syncModelPolicy` | `false` | `true` 时把已有模型的 `contextWindow`/`maxTokens` 校正成上面的值 |
+| `syncCompaction` | `true` | 压缩线够低时自动写按模型的 `modelPolicies` 覆盖 |
+| `setDefaultModel` | `true` | 没有别人接管时，把新会话默认模型设成海师 |
+| `allowRemote` | `false` | 允许非本机来源访问插件接口（DSH 远程访问时需要） |
+| `allowAnonymous` | `false` | 代理不校验本地 Key（只在已被网关挡住时开） |
+
+## 模型策略（这条路由为什么特殊）
+
+学校网关（Open WebUI）对单次请求体有限制：**prompt + `max_tokens` ≤ 300,000**。
+所以这条模型不能照抄官方规格，插件会把这套参数一起写进 `cordis.patch.yml`：
+
+| 位置 | 键 | 值 | 为什么 |
+|---|---|---|---|
+| 模型 | `contextWindow` | `300000` | 网关请求体上限，不是模型能力（模型本身 1M 上下文） |
+| 模型 | `maxTokens` | `96000` | 网关默认输出只有 32,768，不显式声明就白瞎 |
+| 模型 | `input` | `text, image` | 模型支持图片输入 |
+| 模型 | `reasoningEfforts` | `off: none` / `low: low` / `max: max` | 官方只有这三档 |
+| provider | `compat.thinkingFormat` | `deepseek` | 决定思考字段怎么发 |
+| provider | `compat.maxTokensField` | `max_tokens` | 网关只认 `max_tokens` |
+| provider | `compat.supportsDeveloperRole` | `false` | 网关没有 developer 角色（插件代理也会把它转成 system） |
+| provider | `reasoning` | `max` | 默认思考强度 |
+| 压缩 | `compaction-basic.modelPolicies` | `headroomTokens: 461`、`maxTokens: 4000` | 见下 |
+| 默认模型 | `agent-default-model` | `hainnu/deepseek-flash`、`reasoningEffort: max` | 新会话直接用海师 |
+
+压缩线为什么必须单独调：DSH 的触发阈值是
+`floor(min(W × 0.8, W − O − headroomTokens))`，`headroomTokens` 默认 65,536。
+
+- 默认值下：`min(240,000, 300,000 − 96,000 − 65,536)` = **138,464**，6.5 万可用上下文白扔。
+- 插件写入的按模型覆盖：`min(240,000, 300,000 − 96,000 − 461)` = **203,539**，
+  此时 prompt 203,539 + 输出 96,000 = 299,539 ≤ 300,000，正好贴住网关上限。
+
+写入范围刻意收紧：只写**按模型**的 `modelPolicies`（`provider: hainnu` + `model: deepseek-flash`），
+不改 preset 里全局的 `headroomTokens`（那会连带影响其它 provider）；已经够高、或已有本模型覆盖时一律不动。
 
 ## HTTP 接口（Host 半边，面板在用）
 
@@ -112,6 +147,15 @@ curl http://127.0.0.1:9840/dsh-hainnu/status
 - 只实现 OpenAI 兼容（`/v1/chat/completions`）。旧项目的 Anthropic `/v1/messages`
   兼容层**没有移植**——DSH 用不到。
 - 令牌失效、上游 402/5xx、校园网断开都有独立的中文报错，面板「诊断」卡片里能看到最近一次原因。
+- **两个端口都只监听回环地址，但"只监听回环"挡不住浏览器**（DNS 重绑定能让任意网页变成同源）。
+  所以插件路由和 8787 代理都会校验 `Host` / `Origin` / `Sec-Fetch-Site`：来源说不清就 403，
+  伪造 `Host: evil.example.com`、跨站 `Origin`、`Origin: null` 都会被拒。
+- 代理的本地 Key 校验**失败关闭**：一个 Key 都没配好时返回 401（而不是旧行为：直接放行）。
+- 登录有进程级限流：10 分钟内失败 3 次就整体冷却 10 分钟，手动和自动登录共用同一份预算，
+  避免被人反复触发 `/login` 把学校账号刷到锁定。
+- 插件接口需要 DSH 自身的登录态（同源页面），不做单独鉴权；本机其它进程属于同一信任域，
+  它们本来就能直接读 `~/.dsh/hainnu/state.json`。
+- 走 DSH 远程访问（非回环地址）时，需要把 `allowRemote` 设为 `true`，否则面板请求会被 403。
 
 ## 测试
 
@@ -119,9 +163,10 @@ curl http://127.0.0.1:9840/dsh-hainnu/status
 node test/proxy-smoke.mjs    # 假上游：鉴权/归一化/SSE/重试/401/health/端口接管
 node test/login-smoke.mjs    # 假 CAS：表单解析、令牌校验、密码错误、锁定、假 JWT 陷阱
 node test/client-smoke.mjs   # 客户端模块契约：slot 注册形状、中文标签、样式表
+node test/modelconfig-smoke.mjs  # 模型策略：压缩线公式、按模型覆盖、幂等、默认模型
 ```
 
-三个都是离线测试，不联网、不碰真令牌。
+都是离线测试，不联网、不碰真令牌。`npm test` 会全部跑一遍。
 
 ## 许可证与致谢
 

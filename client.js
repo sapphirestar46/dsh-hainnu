@@ -134,6 +134,16 @@ window.__ModuleLoader__.load({
       }
     }
 
+    function fmtNum(value) {
+      const n = Number(value) || 0;
+      if (n <= 0) return '—';
+      try {
+        return n.toLocaleString('en-US');
+      } catch {
+        return String(n);
+      }
+    }
+
     function fmtLeft(ts) {
       const value = Number(ts) || 0;
       if (value <= 0) return '—';
@@ -281,6 +291,7 @@ window.__ModuleLoader__.load({
       const proxy = status !== null && status.proxy !== undefined ? status.proxy : {};
       const endpoint = status !== null && status.endpoint !== undefined ? status.endpoint : {};
       const settings = status !== null && status.settings !== undefined ? status.settings : {};
+      const policy = status !== null && status.policy !== undefined ? status.policy : null;
 
       const loggedIn = state.hasToken === true && Number(state.expiresAt) > Date.now();
       const loginBadge = loggedIn ? badge('已登录', 'ok') : state.hasToken === true ? badge('令牌已过期', 'warn') : badge('未登录', 'off');
@@ -406,6 +417,25 @@ window.__ModuleLoader__.load({
           ['provider', String(endpoint.providerId || '—')],
           ['profile', String(settings.profile || '—')],
         ]),
+        policy !== null && policy.model !== undefined
+          ? [
+              jsx('div', { className: 'hn-sep', key: 's3' }),
+              kv([
+                ['上下文', fmtNum(policy.model.contextWindow)],
+                ['输出上限', fmtNum(policy.model.maxTokens)],
+                ['压缩线', fmtNum(policy.effectiveCompactionLine) + ' / ' + fmtNum(policy.targetCompactionLine)],
+                ['默认模型', policy.defaultModel !== null && policy.defaultModel !== undefined
+                  ? String(policy.defaultModel.provider || '') + '/' + String(policy.defaultModel.model || '')
+                  : '—'],
+              ]),
+            ]
+          : null,
+        policy !== null && Number(policy.effectiveCompactionLine) > 0
+          && Number(policy.targetCompactionLine) > 0
+          && Number(policy.effectiveCompactionLine) < Number(policy.targetCompactionLine)
+          ? jsx('div', { className: 'hn-note', key: 'pn', children:
+              '压缩线低于这条模型的可达值：preset 里 compaction-basic 的全局 headroomTokens 偏大，插件只写按模型覆盖。' })
+          : null,
         jsx('div', { className: 'hn-sep', key: 's2' }),
         jsx('div', { className: 'hn-models', key: 'ml', children: models.length === 0
           ? jsx('span', { className: 'hn-note', children: '还没有拿到模型列表，登录后可点「刷新模型」' })

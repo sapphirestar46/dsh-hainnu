@@ -12,7 +12,14 @@
  * 区别只是不再需要 Playwright：直接走同一条 HTTP 重定向链。
  */
 
-import { ensureModelConfig, readCredential, readProviderSnapshot, DEFAULTS as PROVIDER_DEFAULTS } from './lib/modelconfig.js';
+import { checkHttpRequest, LoginBudget } from './lib/guard.js';
+import {
+  ensureModelConfig,
+  readCredential,
+  readModelPolicy,
+  readProviderSnapshot,
+  DEFAULTS as PROVIDER_DEFAULTS,
+} from './lib/modelconfig.js';
 import { HainnuProxy } from './lib/proxy.js';
 import { login as loginFlow, LoginError, fetchProfile } from './lib/login.js';
 import { jwtExpiry, loadState, publicState, readPassword, readToken, saveState, seal, unseal } from './lib/store.js';
@@ -37,6 +44,15 @@ const DEFAULTS = {
   writeConfig: true,
   profile: 'desktop',
   verifySsl: true,
+  allowRemote: false,
+  allowAnonymous: false,
+  // 模型策略：本地 dsh 里这条路由的特殊配置（网关请求体上限 300,000 / 输出 96,000 /
+  // 压缩线 203,539），插件会把它写进 profile 的 cordis.patch.yml。
+  contextWindow: 300000,
+  maxTokens: 96000,
+  syncModelPolicy: false,
+  syncCompaction: true,
+  setDefaultModel: true,
 };
 
 /** 自动登录的失败预算：学校连续 5 次密码错误会锁账号，这里留足余量。 */
@@ -59,6 +75,13 @@ function normalizeConfig(config) {
     writeConfig: pick('writeConfig', DEFAULTS.writeConfig) !== false,
     profile: String(pick('profile', DEFAULTS.profile)),
     verifySsl: pick('verifySsl', DEFAULTS.verifySsl) !== false,
+    allowRemote: pick('allowRemote', DEFAULTS.allowRemote) === true,
+    allowAnonymous: pick('allowAnonymous', DEFAULTS.allowAnonymous) === true,
+    contextWindow: Number(pick('contextWindow', DEFAULTS.contextWindow)) || DEFAULTS.contextWindow,
+    maxTokens: Number(pick('maxTokens', DEFAULTS.maxTokens)) || DEFAULTS.maxTokens,
+    syncModelPolicy: pick('syncModelPolicy', DEFAULTS.syncModelPolicy) === true,
+    syncCompaction: pick('syncCompaction', DEFAULTS.syncCompaction) !== false,
+    setDefaultModel: pick('setDefaultModel', DEFAULTS.setDefaultModel) !== false,
     aliases: raw.aliases !== null && typeof raw.aliases === 'object' ? raw.aliases : {},
   };
 }
@@ -135,6 +158,14 @@ export function apply(ctx, config) {
   let loginPromise = null;
   let configNote = '';
 
+  // 登录限流：/login 谁都能打（含 DNS 重绑定页），而学校 5 次密码错误锁账号。
+  // 手动登录、自动登录、代理 401 后的重登共用这一份预算，放在接触学校之前拦。
+  const loginBudget = new LoginBudget({
+    maxFailures: 3,
+    windowMs: FAILURE_WINDOW_MS,
+    cooldownMs: FAILURE_WINDOW_MS,
+  });
+
   // 进程级单例。DSH 热重载补丁层时不会杀进程，旧实例的 http server 不会自己消失，
   // 于是新实例只能"接管"旧实例，端口越漂越远、路由还是老的在应答。
   // 这里把当前实例挂在 globalThis 上，新实例先收掉旧的。
@@ -175,6 +206,10 @@ export function apply(ctx, config) {
     if (username === '') throw new LoginError('请填写学号/工号', { code: 'missing_username' });
     if (password === '') throw new LoginError('请填写密码', { code: 'missing_password' });
 
+    // 冷却是进程级的，放在这里而不是 handler 里：自动登录、代理重登也要受约束。
+    const blocked = loginBudget.check();
+    if (blocked !== null) throw new LoginError(blocked.message, { code: blocked.code });
+
     const result = await loginFlow({
       username,
       password,
@@ -191,6 +226,7 @@ export function apply(ctx, config) {
     state.lastError = '';
     state.failCount = 0;
     state.failAt = 0;
+    loginBudget.reset();
     if (remember) state.secret = seal(password);
     persist();
 
@@ -210,6 +246,10 @@ export function apply(ctx, config) {
     loginPromise = (async () => {
       try {
         return await performLogin(input);
+      } catch (error) {
+        // 只有"学校真的记了一笔"的失败才计入限流；网络不通不算。
+        if (error instanceof LoginError) loginBudget.recordFailure(error.code);
+        throw error;
       } finally {
         loginPromise = null;
       }
@@ -259,6 +299,11 @@ export function apply(ctx, config) {
       apiKey: settings.localApiKey,
       modelId: settings.modelId,
       baseURL: proxy.baseURL,
+      contextWindow: settings.contextWindow,
+      maxTokens: settings.maxTokens,
+      syncModelPolicy: settings.syncModelPolicy,
+      syncCompaction: settings.syncCompaction,
+      setDefaultModel: settings.setDefaultModel,
       dryRun: options.dryRun === true,
     });
     configNote = result.notes.join('；');
@@ -295,6 +340,19 @@ export function apply(ctx, config) {
         return null;
       }
     })(),
+    // 模型策略：contextWindow / maxTokens / 实际压缩线 / 默认模型，面板直接展示。
+    policy: (() => {
+      try {
+        return readModelPolicy({
+          profile: settings.profile,
+          providerId: settings.providerId,
+          modelId: settings.modelId,
+          headroomTokens: PROVIDER_DEFAULTS.compactionHeadroomTokens,
+        });
+      } catch {
+        return null;
+      }
+    })(),
   });
 
   const handler = async (req, res) => {
@@ -307,6 +365,14 @@ export function apply(ctx, config) {
     }
     const route = url.pathname.startsWith(ROUTE_PREFIX) ? url.pathname.slice(ROUTE_PREFIX.length) || '/' : url.pathname;
     const method = (req.method || 'GET').toUpperCase();
+
+    // 第一道闸：DSH 的 webServer 对所有本机端口开放，同源策略也挡不住 DNS 重绑定页。
+    // 来源说不清就在这里拒掉，后面的路由一律看不到请求。
+    const rejection = checkHttpRequest(req, { allowRemote: settings.allowRemote });
+    if (rejection !== null) {
+      sendJson(res, 403, { ok: false, error: { code: rejection.code, message: rejection.message } });
+      return;
+    }
 
     try {
       if (route === '/status' && method === 'GET') {

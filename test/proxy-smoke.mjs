@@ -161,6 +161,51 @@ async function main() {
     assert.equal(r.json.error.message, 'bad local api key');
   });
 
+  await check('伪造 Host（DNS 重绑定）被拒 403', async () => {
+    const r = await fetchJson(`${base}/v1/models`, {
+      headers: { authorization: 'Bearer sk-test', host: 'evil.example.com' },
+    });
+    assert.equal(r.status, 403);
+    assert.equal(r.json.error.code, 'bad_host');
+  });
+
+  await check('跨站 Origin 被拒 403', async () => {
+    const r = await fetchJson(`${base}/v1/models`, {
+      headers: { authorization: 'Bearer sk-test', origin: 'https://evil.example' },
+    });
+    assert.equal(r.status, 403);
+    assert.equal(r.json.error.code, 'cross_site');
+  });
+
+  await check('同源 Origin 正常放行', async () => {
+    const r = await fetchJson(`${base}/v1/models`, {
+      headers: { authorization: 'Bearer sk-test', origin: `http://127.0.0.1:${proxyPort}` },
+    });
+    assert.equal(r.status, 200);
+  });
+
+  await check('/health 也拒绝伪造 Host', async () => {
+    const r = await fetchJson(`${base}/health`, { headers: { host: 'evil.example.com' } });
+    assert.equal(r.status, 403);
+  });
+
+  await check('没配口令时失败关闭（401 而不是放行）', async () => {
+    const closed = new HainnuProxy({
+      host: '127.0.0.1',
+      port: await freePort(),
+      upstream: `http://127.0.0.1:${upstreamPort}`,
+      acceptKeys: [],
+      allowAnonymous: false,
+      getToken: () => JWT,
+    });
+    const st = await closed.start();
+    assert.equal(closed.authMode(), 'locked');
+    assert.equal(st.mode, 'running');
+    const r = await fetchJson(`http://127.0.0.1:${st.port}/v1/models`);
+    assert.equal(r.status, 401);
+    await closed.stop();
+  });
+
   await check('模型列表透出上游两个模型', async () => {
     const r = await fetchJson(`${base}/v1/models`, { headers: { authorization: 'Bearer sk-test' } });
     assert.equal(r.status, 200);
