@@ -21,6 +21,7 @@ import {
   DEFAULTS as PROVIDER_DEFAULTS,
 } from './lib/modelconfig.js';
 import { HainnuProxy } from './lib/proxy.js';
+import { normalizeUsage, recordUsage, summarizeUsage } from './lib/usage.js';
 import { login as loginFlow, LoginError, fetchProfile } from './lib/login.js';
 import { jwtExpiry, loadState, publicState, readPassword, readToken, saveState, seal, unseal } from './lib/store.js';
 
@@ -156,6 +157,18 @@ export function apply(ctx, config) {
     }
   };
 
+  // 用量统计跟着 state.json 一起落盘，但每个请求都写盘太频繁，这里做 2 秒合并。
+  state.usage = normalizeUsage(state.usage);
+  let usageTimer = null;
+  const schedulePersist = () => {
+    if (usageTimer !== null) return;
+    usageTimer = setTimeout(() => {
+      usageTimer = null;
+      persist();
+    }, 2000);
+    if (typeof usageTimer.unref === 'function') usageTimer.unref();
+  };
+
   let loginPromise = null;
   let configNote = '';
 
@@ -192,6 +205,10 @@ export function apply(ctx, config) {
     verifySsl: settings.verifySsl,
     aliases: settings.aliases,
     acceptKeys,
+    onUsage: (sample) => {
+      state.usage = recordUsage(state.usage, sample);
+      schedulePersist();
+    },
     getToken: () => {
       if (!tokenUsable(state)) return '';
       return readToken(state);
@@ -325,6 +342,8 @@ export function apply(ctx, config) {
     endpoint: { baseURL: proxy.baseURL, apiKey: settings.localApiKey, providerId: settings.providerId, modelId: settings.modelId },
     state: publicState(state),
     proxy: proxy.status(),
+    // 经过本插件代理的用量（面板统计条与热力图用）。
+    usage: summarizeUsage(state.usage),
     settings: {
       profile: settings.profile,
       upstream: settings.upstream,

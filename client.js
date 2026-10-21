@@ -104,6 +104,43 @@ window.__ModuleLoader__.load({
 .hn-kv > div:nth-child(odd) { color: var(--dsw-alias-label-tertiary); }
 .hn-kv > div:nth-child(even) { word-break: break-all; color: var(--dsw-alias-label-primary); }
 .hn-sep { height: 1px; background: var(--dsw-alias-separator-primary); margin: 2px 0; }
+
+/* --- 用量统计（跟随主题 token，深浅色自适应） --- */
+.hn-usage { display: flex; flex-direction: column; gap: 12px; }
+.hn-strip { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border-radius: 10px;
+  border: 1px solid var(--dsw-alias-settings-card-stroke); background: var(--dsw-alias-settings-card-fill);
+  overflow: hidden; }
+.hn-stat { padding: 13px 8px 12px; text-align: center; border-left: 1px solid var(--dsw-alias-separator-primary); }
+.hn-stat:first-child { border-left: 0; }
+.hn-stat b { display: block; font-size: 17px; font-weight: 600; line-height: 1.25;
+  color: var(--dsw-alias-label-primary); font-variant-numeric: tabular-nums; }
+.hn-stat span { display: block; margin-top: 3px; font-size: 11.5px; color: var(--dsw-alias-label-tertiary); }
+.hn-heat-box { border: 1px solid var(--dsw-alias-settings-card-stroke); border-radius: 10px;
+  background: var(--dsw-alias-settings-card-fill); padding: 12px 14px 10px; }
+.hn-heat-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.hn-heat-head h4 { margin: 0; font-size: 12.5px; font-weight: 600; color: var(--dsw-alias-label-primary); }
+.hn-tabs { display: flex; gap: 2px; padding: 2px; border-radius: 7px; background: var(--dsw-alias-fill-l1); }
+.hn-tab { border: 0; background: transparent; color: var(--dsw-alias-label-tertiary); font-size: 11.5px;
+  line-height: 1; padding: 4px 8px; border-radius: 5px; cursor: pointer; font-family: inherit; }
+.hn-tab:hover { color: var(--dsw-alias-label-primary); }
+.hn-tab.on { background: var(--dsw-alias-settings-card-fill); color: var(--dsw-alias-label-primary);
+  box-shadow: var(--dsw-elevation-panel); }
+.hn-heat-scroll { overflow-x: auto; }
+.hn-heat { display: grid; grid-auto-flow: column; grid-auto-columns: 10px;
+  grid-template-rows: repeat(7, 10px); gap: 3px; min-width: max-content; }
+.hn-cell { width: 10px; height: 10px; border-radius: 2px; background: var(--dsw-alias-fill-l1); }
+.hn-cell.l1 { background: var(--dsw-alias-brand-primary); opacity: .28; }
+.hn-cell.l2 { background: var(--dsw-alias-brand-primary); opacity: .48; }
+.hn-cell.l3 { background: var(--dsw-alias-brand-primary); opacity: .72; }
+.hn-cell.l4 { background: var(--dsw-alias-brand-primary); opacity: 1; }
+.hn-heat-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  margin-top: 8px; font-size: 11px; color: var(--dsw-alias-label-tertiary); }
+.hn-axis { display: grid; grid-auto-flow: column; grid-auto-columns: 10px; gap: 3px;
+  margin-top: 6px; min-width: max-content; }
+.hn-axis > span { font-size: 10.5px; line-height: 1; color: var(--dsw-alias-label-tertiary);
+  white-space: nowrap; }
+.hn-legend { display: flex; align-items: center; gap: 3px; }
+.hn-legend .hn-cell { display: inline-block; }
 `;
 
     function ensureStyle() {
@@ -155,8 +192,67 @@ window.__ModuleLoader__.load({
       return `${hours} 小时 ${minutes % 60} 分后过期`;
     }
 
-    async function call(path, body) {
-      const options = body === undefined ? { method: 'GET' } : {
+    function fmtTokens(value) {
+      const n = Number(value) || 0;
+      if (n <= 0) return '0';
+      if (n >= 1e8) return trimZero((n / 1e8).toFixed(1)) + '亿';
+      if (n >= 1e4) return trimZero((n / 1e4).toFixed(1)) + '万';
+      return String(n);
+    }
+
+    function trimZero(text) {
+      return String(text).replace(/\.0$/, '');
+    }
+
+    function fmtDuration(ms) {
+      const n = Number(ms) || 0;
+      if (n <= 0) return '—';
+      const total = Math.floor(n / 60000);
+      const hours = Math.floor(total / 60);
+      const minutes = total % 60;
+      if (hours > 0) return hours + ' 小时' + (minutes > 0 ? ' ' + minutes + ' 分' : '');
+      if (minutes > 0) return minutes + ' 分';
+      return Math.max(1, Math.round(n / 1000)) + ' 秒';
+    }
+
+    /** 热力图的三种口径：每天 / 每周 / 累计总量。 */
+    function heatValues(series, mode) {
+      const points = Array.isArray(series) ? series : [];
+      const daily = points.map((item) => Number(item && item.tokens) || 0);
+      if (mode === 'week') {
+        const out = daily.slice();
+        for (let end = out.length - 1; end >= 0; end -= 7) {
+          let sum = 0;
+          for (let i = Math.max(0, end - 6); i <= end; i += 1) sum += daily[i];
+          for (let i = Math.max(0, end - 6); i <= end; i += 1) out[i] = sum;
+        }
+        return out;
+      }
+      if (mode === 'total') {
+        const out = [];
+        let sum = 0;
+        for (const value of daily) {
+          sum += value;
+          out.push(sum);
+        }
+        return out;
+      }
+      return daily;
+    }
+
+    function heatLevels(values) {
+      const max = values.reduce((top, value) => (value > top ? value : top), 0);
+      return values.map((value) => {
+        if (value <= 0 || max <= 0) return 0;
+        const ratio = value / max;
+        if (ratio > 0.75) return 4;
+        if (ratio > 0.5) return 3;
+        if (ratio > 0.25) return 2;
+        return 1;
+      });
+    }
+
+    async function call(path, body) {      const options = body === undefined ? { method: 'GET' } : {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body),
@@ -210,6 +306,111 @@ window.__ModuleLoader__.load({
     }
 
     /* ---------------------------------------------------------------- 面板 */
+
+    /**
+     * 用量面板：上面是 Codex 风格的五格统计条，下面是 Token 活动热力图。
+     * 只统计经过本插件代理的请求；颜色全部走主题 token，深浅色自动跟随。
+     */
+    function UsagePanels(props) {
+      const usage = props !== null && props !== undefined && props.usage !== null && typeof props.usage === 'object'
+        ? props.usage
+        : null;
+      const [mode, setMode] = react.useState('day');
+      const series = usage !== null && Array.isArray(usage.series) ? usage.series : [];
+      const levels = heatLevels(heatValues(series, mode));
+
+      const cells = [];
+      const first = series.length > 0 ? new Date(String(series[0].date) + 'T00:00:00') : null;
+      const pad = first !== null && Number.isFinite(first.getTime()) ? first.getDay() : 0;
+      for (let i = 0; i < pad; i += 1) cells.push(jsx('div', { className: 'hn-cell', key: 'pad-' + i }));
+      for (let i = 0; i < levels.length; i += 1) {
+        cells.push(jsx('div', {
+          className: 'hn-cell' + (levels[i] > 0 ? ' l' + levels[i] : ''),
+          key: 'c-' + i,
+          title: String(series[i].date) + '：' + fmtTokens(series[i].tokens),
+        }));
+      }
+
+      const stats = [
+        ['累计 Token 数', fmtTokens(usage !== null ? usage.totalTokens : 0)],
+        ['Token 使用峰值', fmtTokens(usage !== null ? usage.peakDayTokens : 0)],
+        ['最长任务用时', fmtDuration(usage !== null ? usage.longestMs : 0)],
+        ['最长连续天数', (Number(usage !== null ? usage.longestStreak : 0) || 0) + ' 天'],
+        ['当前连续天数', (Number(usage !== null ? usage.currentStreak : 0) || 0) + ' 天'],
+      ];
+      const tabs = [['day', '每天'], ['week', '每周'], ['total', '累计总量']];
+      const rangeText = series.length > 0 ? '近 12 个月' : '';
+
+      // 底部月份刻度：只在月份变化处打点，且至少隔 4 列，避免拥挤。
+      const axis = [];
+      let lastMonth = '';
+      let lastCol = -99;
+      for (let i = 0; i < series.length; i += 1) {
+        const month = String(series[i].date).slice(0, 7);
+        if (month === lastMonth) continue;
+        const col = Math.floor((pad + i) / 7) + 1;
+        if (col - lastCol >= 4) {
+          axis.push(jsx('span', {
+            key: 't-' + col,
+            style: { gridColumnStart: col },
+            children: Number(month.slice(5, 7)) + ' 月',
+          }));
+          lastCol = col;
+        }
+        lastMonth = month;
+      }
+
+      return jsx('div', { className: 'hn-usage', children: [
+        jsx('div', {
+          className: 'hn-strip',
+          key: 'strip',
+          children: stats.map((pair) => jsx('div', {
+            className: 'hn-stat',
+            key: pair[0],
+            children: [
+              jsx('b', { children: pair[1], key: 'b' }),
+              jsx('span', { children: pair[0], key: 's' }),
+            ],
+          })),
+        }),
+        jsx('div', { className: 'hn-heat-box', key: 'heat', children: [
+          jsx('div', { className: 'hn-heat-head', key: 'h', children: [
+            jsx('h4', { children: 'Token 活动', key: 't' }),
+            jsx('div', {
+              className: 'hn-tabs',
+              key: 'tabs',
+              children: tabs.map((pair) => jsx('button', {
+                className: 'hn-tab' + (mode === pair[0] ? ' on' : ''),
+                key: pair[0],
+                type: 'button',
+                onClick: () => setMode(pair[0]),
+                children: pair[1],
+              })),
+            }),
+          ] }),
+          jsx('div', {
+            className: 'hn-heat-scroll',
+            key: 's',
+            children: [
+              jsx('div', { className: 'hn-heat', key: 'g', children: cells }),
+              jsx('div', { className: 'hn-axis', key: 'a', children: axis }),
+            ],
+          }),
+          jsx('div', { className: 'hn-heat-foot', key: 'f', children: [
+            jsx('span', { children: rangeText, key: 'l' }),
+            jsx('span', { className: 'hn-legend', key: 'g', children: [
+              jsx('span', { children: '少', key: 'a' }),
+              jsx('div', { className: 'hn-cell', key: 'c0' }),
+              jsx('div', { className: 'hn-cell l1', key: 'c1' }),
+              jsx('div', { className: 'hn-cell l2', key: 'c2' }),
+              jsx('div', { className: 'hn-cell l3', key: 'c3' }),
+              jsx('div', { className: 'hn-cell l4', key: 'c4' }),
+              jsx('span', { children: '多', key: 'z' }),
+            ] }),
+          ] }),
+        ] }),
+      ] });
+    }
 
     function HainnuPanel() {
       const [status, setStatus] = react.useState(null);
@@ -352,6 +553,15 @@ window.__ModuleLoader__.load({
             jsx('span', { className: 'hn-v mono', key: 'v', children: models.length > 0 ? models.join(', ') : '未获取' }),
           ] }),
         ] }),
+      ] }));
+
+      // 1.5 用量（经过代理的请求）
+      cards.push(jsx('div', { className: 'hn-card', key: 'usage', children: [
+        jsx('h3', { children: '用量', key: 't' }),
+        jsx(UsagePanels, {
+          key: 'u',
+          usage: status !== null && status.usage !== undefined ? status.usage : null,
+        }),
       ] }));
 
       // 2. 账号
