@@ -135,6 +135,11 @@ export function apply(ctx, config) {
   let loginPromise = null;
   let configNote = '';
 
+  // 进程级单例。DSH 热重载补丁层时不会杀进程，旧实例的 http server 不会自己消失，
+  // 于是新实例只能"接管"旧实例，端口越漂越远、路由还是老的在应答。
+  // 这里把当前实例挂在 globalThis 上，新实例先收掉旧的。
+  const SINGLETON = Symbol.for('dsh-hainnu.active-proxy');
+
   // 本地代理每个请求都要判断 Key，读凭据文件带 5 秒缓存，避免每请求一次磁盘 IO。
   let keyCache = { at: 0, keys: [] };
   const acceptKeys = () => {
@@ -449,19 +454,42 @@ export function apply(ctx, config) {
     log('warn', `${name}: 挂载 HTTP 面失败: ${String(error)}`);
   }
 
-  try {
-    if (typeof ctx.on === 'function') {
-      ctx.on('dispose', () => {
-        proxy.stop().catch(() => {});
-      });
+  const releaseProxy = () => {
+    try {
+      if (globalThis[SINGLETON] === proxy) delete globalThis[SINGLETON];
+    } catch {
+      /* ignore */
     }
+    proxy.stop().catch(() => {});
+  };
+
+  try {
+    if (typeof ctx.on === 'function') ctx.on('dispose', releaseProxy);
   } catch {
     /* dispose 钩子拿不到就算了 */
+  }
+  try {
+    // 这个 effect 的清理函数在插件销毁时一定会跑，比 dispose 事件可靠
+    if (typeof ctx.effect === 'function') ctx.effect(() => releaseProxy, `${name}: proxy lifecycle`);
+  } catch {
+    /* ignore */
   }
 
   /* ------------------------------------------------------------ 启动自检 */
 
   const boot = async () => {
+    // 0) 收掉上一个被热重载替换掉的实例，防止端口漂移与旧路由抢占
+    try {
+      const previous = globalThis[SINGLETON];
+      if (previous !== undefined && previous !== null && previous !== proxy) {
+        await previous.stop();
+        log('info', `${name}: 已关闭上一个插件实例的代理（端口 ${previous.port}）`);
+      }
+    } catch (error) {
+      log('warn', `${name}: 关闭上一个实例失败: ${String(error)}`);
+    }
+    globalThis[SINGLETON] = proxy;
+
     // 1) 代理先起来（后面的 baseURL 要写实际端口）
     if (settings.autoStart !== false && state.autoStart !== false) {
       try {
