@@ -1,8 +1,8 @@
-# dsh-hainnu — 在 DSH 里登录海南师范大学账号,享受海师自部署deepseek
-**欢迎海师师生使用** \
-**由DeepseekV41 1017 编写** 
+# dsh-hainnu — 在 DSH 里登录海南师范大学账号
 
-修改自上一个项目 [hainnu-proxy](https://github.com/sapphirestar46/hainnu-proxy) 。
+**享受海师自部署的 DeepSeek。欢迎海师师生使用。**
+
+由 DeepSeek-V4.1（2026-10-17）编写，修改自上一个项目 [hainnu-proxy](https://github.com/sapphirestar46/hainnu-proxy)。
 
 装好之后：
 
