@@ -1,6 +1,10 @@
-# dsh-hainnu — 在 DSH 里登录海师账号
+# dsh-hainnu — 在 DSH 里登录海南师范大学账号,享受海师自部署deepseek
+**欢迎海师师生使用** \
+**由DeepseekV41 1017 编写** \
 
-参考 [hainnu-proxy](https://github.com/sapphirestar46/hainnu-proxy) 做的 DSH 插件。装好之后：
+修改自上一个项目 [hainnu-proxy](https://github.com/sapphirestar46/hainnu-proxy) 。
+
+装好之后：
 
 1. DSH 左侧栏多一个「**海师账号**」入口；
 2. 在里面填**学号/工号 + 密码**，密码用系统密钥加密存在本机；
