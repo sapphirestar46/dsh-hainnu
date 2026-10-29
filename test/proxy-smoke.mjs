@@ -57,7 +57,9 @@ const upstream = http.createServer(async (req, res) => {
       res.writeHead(200, { 'content-type': 'text/event-stream' });
       res.write('data: {"choices":[{"delta":{"content":"你"}}]}\n\n');
       res.write('data: {"choices":[{"delta":{"content":"好"}}]}\n\n');
-      res.write('data: {"usage":{"prompt_tokens":11,"completion_tokens":2}}\n\n');
+      // usage 带嵌套对象（上游真实形状），且故意跨两次 write 到达
+      res.write('data: {"usage":{"prompt_tokens":11,"completion_tokens":2,"total_tokens":13,"prompt_tokens_details":{"cached_tokens":0}');
+      res.write(',"completion_tokens_details":{"reasoning_tokens":2}}}\n\n');
       res.end('data: [DONE]\n\n');
       return;
     }
@@ -137,12 +139,14 @@ async function main() {
   let requestedPort = await freePort();
   while (requestedPort === upstreamPort) requestedPort = await freePort();
   await listen(upstream, upstreamPort);
+  const usageSamples = [];
   const proxy = new HainnuProxy({
     host: '127.0.0.1',
     port: requestedPort,
     upstream: `http://127.0.0.1:${upstreamPort}`,
     modelId: 'deepseek-flash',
     acceptKeys: ['sk-test'],
+    onUsage: (sample) => usageSamples.push(sample),
     getToken: () => JWT,
     relogin: () => JWT,
     retries: 3,
@@ -259,7 +263,12 @@ async function main() {
     }, { authorization: 'Bearer sk-test' });
     assert.equal(r.status, 200);
     assert.match(String(r.headers['content-type']), /text\/event-stream/);
-    assert.equal(r.text, 'data: {"choices":[{"delta":{"content":"你"}}]}\n\ndata: {"choices":[{"delta":{"content":"好"}}]}\n\ndata: {"usage":{"prompt_tokens":11,"completion_tokens":2}}\n\ndata: [DONE]\n\n');
+    assert.equal(r.text, 'data: {"choices":[{"delta":{"content":"你"}}]}\n\ndata: {"choices":[{"delta":{"content":"好"}}]}\n\ndata: {"usage":{"prompt_tokens":11,"completion_tokens":2,"total_tokens":13,"prompt_tokens_details":{"cached_tokens":0},"completion_tokens_details":{"reasoning_tokens":2}}}\n\ndata: [DONE]\n\n');
+    // 回归：usage 带嵌套对象、且跨 chunk 到达时仍要记账（旧正则 [^}]* 会截断）
+    const sample = usageSamples.at(-1);
+    assert.equal(sample.promptTokens, 11);
+    assert.equal(sample.completionTokens, 2);
+    assert.equal(sample.totalTokens, 13);
   });
 
   await check('上游 500 会退避重试并最终成功', async () => {
