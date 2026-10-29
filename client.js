@@ -181,17 +181,6 @@ window.__ModuleLoader__.load({
       }
     }
 
-    function fmtLeft(ts) {
-      const value = Number(ts) || 0;
-      if (value <= 0) return '—';
-      const left = value - Date.now();
-      if (left <= 0) return '已过期';
-      const minutes = Math.floor(left / 60000);
-      if (minutes < 60) return `${minutes} 分钟后过期`;
-      const hours = Math.floor(minutes / 60);
-      return `${hours} 小时 ${minutes % 60} 分后过期`;
-    }
-
     function fmtTokens(value) {
       const n = Number(value) || 0;
       if (n <= 0) return '0';
@@ -495,8 +484,8 @@ window.__ModuleLoader__.load({
       const policy = status !== null && status.policy !== undefined ? status.policy : null;
       const security = status !== null && status.security !== undefined ? status.security : null;
 
-      const loggedIn = state.hasToken === true && Number(state.expiresAt) > Date.now();
-      const loginBadge = loggedIn ? badge('已登录', 'ok') : state.hasToken === true ? badge('令牌已过期', 'warn') : badge('未登录', 'off');
+      const loggedIn = state.hasToken === true;
+      const loginBadge = loggedIn ? badge('已登录', 'ok') : badge('未登录', 'off');
       const proxyMode = String(proxy.mode || 'stopped');
       const proxyBadge =
         proxyMode === 'running' ? badge('运行中', 'ok')
@@ -540,8 +529,8 @@ window.__ModuleLoader__.load({
             jsx('span', { className: 'hn-v', key: 'v', children: state.displayName ? '（' + state.displayName + '）' : '' }),
           ] }),
           jsx('div', { className: 'hn-row', key: 'token', children: [
-            jsx('span', { className: 'hn-k', children: '令牌' }),
-            jsx('span', { className: 'hn-v', key: 'v', children: state.hasToken === true ? fmtLeft(state.expiresAt) : '无' }),
+            jsx('span', { className: 'hn-k', children: '上次登录' }),
+            jsx('span', { className: 'hn-v', key: 'v', children: fmtTime(state.lastLoginAt || state.tokenAt) }),
           ] }),
           jsx('div', { className: 'hn-row', key: 'proxy', children: [
             jsx('span', { className: 'hn-k', children: '代理' }),

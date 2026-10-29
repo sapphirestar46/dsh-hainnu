@@ -127,11 +127,14 @@ async function readJson(req) {
   }
 }
 
+/**
+ * 令牌是否可用。只看有没有拿到，不看 JWT 里的 exp——学校签发的 exp 上游并不校验
+ * （实测同一个令牌文件连续用了 31 天、9.7 万次请求）。照 exp 提前重登只会每天白做
+ * 几次密码校验，还会把完全能用的令牌判成「已过期」。真失效时上游回 401，由 proxy
+ * 的 relogin 重登一次。
+ */
 function tokenUsable(state) {
-  if ((state.token || '') === '') return false;
-  const expiresAt = Number(state.expiresAt) || jwtExpiry(readToken(state));
-  if (expiresAt <= 0) return true;
-  return Date.now() < expiresAt - 60 * 1000;
+  return (state.token || '') !== '';
 }
 
 export function apply(ctx, config) {
