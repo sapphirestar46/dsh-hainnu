@@ -96,7 +96,29 @@ window.__ModuleLoader__.load({
   color: var(--dsw-alias-state-success-primary); }
 .hn-alert.info { border-color: var(--dsw-alias-border-l2); color: var(--dsw-alias-label-secondary); }
 .hn-models { display: flex; flex-wrap: wrap; gap: 6px; }
-    .hn-src { opacity: .6; font-size: 11px; }
+.hn-src { opacity: .6; font-size: 11px; }
+
+/* --- 可用模型 --- */
+.hn-catalog { display: flex; flex-direction: column; }
+.hn-model { display: flex; flex-direction: column; gap: 6px; padding: 12px 0;
+  border-top: 1px solid var(--dsw-alias-separator-primary); }
+.hn-model:first-child { padding-top: 0; border-top: 0; }
+.hn-model:last-child { padding-bottom: 0; }
+.hn-model-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.hn-model-name { font-size: 13.5px; font-weight: 600; color: var(--dsw-alias-label-primary); }
+.hn-model-meta { display: flex; flex-wrap: wrap; gap: 12px; font-size: 11.5px;
+  color: var(--dsw-alias-label-tertiary); }
+.hn-model-desc { font-size: 12.5px; line-height: 19px; color: var(--dsw-alias-label-secondary); }
+.hn-model-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.hn-tag { font-size: 11px; line-height: 18px; padding: 0 7px; border-radius: 9px;
+  background: var(--dsw-alias-fill-l1); color: var(--dsw-alias-label-secondary);
+  border: 1px solid var(--dsw-alias-border-l2); }
+.hn-tag.ok { color: var(--dsw-alias-state-success-primary); border-color: currentColor; }
+.hn-tag.warn { color: var(--dsw-alias-state-warn-primary); border-color: currentColor; }
+.hn-tag.off { color: var(--dsw-alias-label-tertiary); }
+.hn-tag.hi { color: var(--dsw-alias-brand-primary); border-color: currentColor; }
+.hn-model-notes { margin: 0; padding-left: 18px; font-size: 11.5px; line-height: 18px;
+  color: var(--dsw-alias-label-tertiary); }
 .hn-chip { border: 1px solid var(--dsw-alias-border-l2); border-radius: 6px; padding: 1px 8px;
   font-size: 12px; background: var(--dsw-alias-fill-l1);
   font-family: var(--dsh-font-family-code); color: var(--dsw-alias-label-secondary); }
@@ -557,6 +579,38 @@ window.__ModuleLoader__.load({
           ] }),
         ] }),
       ] }));
+
+
+      // 1.2 可用模型：每个模型的来源、规格、能力与一句话简介
+      const catalog = status !== null && Array.isArray(status.models) ? status.models : [];
+      if (catalog.length > 0) {
+        cards.push(jsx('div', { className: 'hn-card', key: 'catalog', children: [
+          jsx('h3', { children: '可用模型', key: 't' }),
+          jsx('div', { className: 'hn-catalog', key: 'l', children: catalog.map((item) => jsx('div', { className: 'hn-model', key: String(item.id || item.name), children: [
+            jsx('div', { className: 'hn-model-head', key: 'h', children: [
+              jsx('span', { className: 'hn-model-name', key: 'n', children: String(item.name || item.id || '') }),
+              item.source ? jsx('span', { className: 'hn-tag' + (String(item.source).includes('自部署') ? ' hi' : ''), key: 's', children: String(item.source) }) : null,
+            ] }),
+            jsx('div', { className: 'hn-model-meta', key: 'm', children: [
+              jsx('span', { key: 'id', className: 'mono', children: String(item.id || '') }),
+              jsx('span', { key: 'cw', children: '上下文 ' + fmtNum(item.contextWindow) }),
+              jsx('span', { key: 'mt', children: '输出上限 ' + fmtNum(item.maxTokens) }),
+            ] }),
+            item.summary ? jsx('div', { className: 'hn-model-desc', key: 'd', children: String(item.summary) }) : null,
+            jsx('div', { className: 'hn-model-tags', key: 'g', children: [
+              item.vision === true
+                ? jsx('span', { className: 'hn-tag ok', key: 'v', children: '支持图片' })
+                : jsx('span', { className: 'hn-tag off', key: 'v', children: '纯文本' }),
+              item.tools === 'native'
+                ? jsx('span', { className: 'hn-tag ok', key: 'w', children: '原生工具调用' })
+                : jsx('span', { className: 'hn-tag warn', key: 'w', children: '模拟工具调用' }),
+            ] }),
+            Array.isArray(item.notes) && item.notes.length > 0
+              ? jsx('ul', { className: 'hn-model-notes', key: 'k', children: item.notes.map((note, index) => jsx('li', { key: String(index), children: String(note) })) })
+              : null,
+          ] }, String(item.id || item.name))) }),
+        ] }));
+      }
 
       // 1.5 用量（经过代理的请求）
       cards.push(jsx('div', { className: 'hn-card', key: 'usage', children: [

@@ -21,7 +21,7 @@ import {
   DEFAULTS as PROVIDER_DEFAULTS,
 } from './lib/modelconfig.js';
 import { HainnuProxy } from './lib/proxy.js';
-import { LOCAL_MODEL, PORTAL_MODELS } from './lib/models.js';
+import { LOCAL_MODEL, PORTAL_MODELS, allModels } from './lib/models.js';
 import { PortalClient, portalLogin } from './lib/portal.js';
 import { normalizeUsage, recordUsage, summarizeUsage } from './lib/usage.js';
 import { login as loginFlow, LoginError, fetchProfile } from './lib/login.js';
@@ -427,6 +427,19 @@ export function apply(ctx, config) {
             error: String(state.portalError || ''),
             models: PORTAL_MODELS.map((model) => ({ id: model.id, name: model.name, contextWindow: model.contextWindow })),
           },
+    // 模型目录 + 每个模型的简介/能力，面板「可用模型」卡片直接渲染这份数据。
+    models: allModels().map((model) => ({
+      id: model.id,
+      name: model.name,
+      source: model.source,
+      contextWindow: model.contextWindow,
+      maxTokens: model.maxTokens,
+      input: model.input,
+      tools: model.tools,
+      vision: model.vision === true,
+      summary: model.summary,
+      notes: Array.isArray(model.notes) ? model.notes : [],
+    })),
     // 经过本插件代理的用量（面板统计条与热力图用）。
     usage: summarizeUsage(state.usage),
     settings: {

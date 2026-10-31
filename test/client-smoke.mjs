@@ -176,6 +176,47 @@ check('ENDPOINT 指向宿主挂载前缀', () => {
   assert.equal(mod.ENDPOINT, '/dsh-hainnu');
 });
 
+
+/* 可用模型卡片：桩 fetch + 真实 effect，验证宿主的 models 字段能渲染出简介与能力标签 */
+{
+  const payload = {
+    ok: true,
+    state: { hasToken: true, hasPassword: true, username: '20230001', models: ['deepseek-flash'] },
+    endpoint: { baseURL: 'http://127.0.0.1:8787/v1', modelId: 'deepseek-flash' },
+    proxy: { mode: 'running', baseURL: 'http://127.0.0.1:8787/v1', models: ['deepseek-flash', 'kimi-k3'], portal: { enabled: true, threads: 0 } },
+    portal: { enabled: true, loggedIn: true, models: [] },
+    settings: { profile: 'desktop', upstream: 'https://chat.hainnu.edu.cn', apiKeyEnv: 'HAINNU_API_KEY' },
+    security: { allowRemote: false, allowAnonymous: false, apiAuth: 'keys', loginGuard: {}, originGuard: true },
+    usage: null,
+    models: [
+      { id: 'deepseek-flash', name: 'DeepSeek V4.1 Flash (海师自部署)', source: '海师自部署', contextWindow: 300000, maxTokens: 80000, tools: 'native', vision: true, summary: '唯一能看图的模型', notes: ['支持图片输入'] },
+      { id: 'kimi-k3', name: 'Kimi K3 (海师阿里云)', source: '海师阿里云', contextWindow: 1000000, maxTokens: 8192, tools: 'emulated', vision: false, summary: '偏思考的重型模型', notes: ['不支持图片'] },
+    ],
+  };
+  globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => payload });
+
+  const originalEffect = reactStub.useEffect;
+  reactStub.useEffect = (fn) => {
+    hookIndex += 1;
+    try { fn(); } catch { /* 计时器/清理函数失败不影响断言 */ }
+  };
+  hookState = [];
+  hookIndex = 0;
+  mod.HainnuPanel();
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  hookIndex = 0;
+  const tree = mod.HainnuPanel();
+  reactStub.useEffect = originalEffect;
+
+  const text = JSON.stringify(tree);
+  assert.match(text, /可用模型/);
+  assert.match(text, /唯一能看图的模型/);
+  assert.match(text, /支持图片/);
+  assert.match(text, /原生工具调用/);
+  assert.match(text, /模拟工具调用/);
+  results.push(['PASS', '可用模型卡片渲染出简介与能力标签']);
+}
+
 let failed = 0;
 for (const [kind, label] of results) {
   if (kind === 'FAIL') failed += 1;
