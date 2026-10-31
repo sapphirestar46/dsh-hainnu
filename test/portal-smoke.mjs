@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import { PortalClient, PortalError, flattenMessages, hashMessages, messageText } from '../lib/portal.js';
 import { PORTAL_MODELS, allModels, isPortalModel, modelById } from '../lib/models.js';
-import { HainnuProxy, buildToolPrompt, looksLikePlatformError, parseToolCall, wantsThinking } from '../lib/proxy.js';
+import { HainnuProxy, buildToolPrompt, looksLikePlan, looksLikePlatformError, parseToolCall, wantsThinking } from '../lib/proxy.js';
 
 let passed = 0;
 function ok(name, fn) {
@@ -163,6 +163,17 @@ ok('代理模型清单合并两个上游', () => {
   assert.match(text, /工具结果：文件内容/);
 
   console.log('  ok  工具结果拍平');
+  passed += 1;
+}
+
+// 只说不做的「计划」判定
+{
+  assert.equal(looksLikePlan('我先查看一下工作区结构。'), true);
+  assert.equal(looksLikePlan('好的，我来检查插件代码。'), true);
+  assert.equal(looksLikePlan('让我先了解一下项目。'), true);
+  assert.equal(looksLikePlan('已经改好了，文件在 lib/proxy.js。'.repeat(10)), false);
+  assert.equal(looksLikePlan(''), false);
+  console.log('  ok  只说不做的计划判定');
   passed += 1;
 }
 
