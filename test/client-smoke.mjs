@@ -189,7 +189,7 @@ check('ENDPOINT 指向宿主挂载前缀', () => {
     security: { allowRemote: false, allowAnonymous: false, apiAuth: 'keys', loginGuard: {}, originGuard: true },
     usage: null,
     models: [
-      { id: 'deepseek-flash', name: 'DeepSeek V4.1 Flash (海师自部署)', source: '海师自部署', contextWindow: 300000, maxTokens: 80000, tools: 'native', vision: true, summary: '唯一能看图的模型', notes: ['支持图片输入'] },
+      { id: 'deepseek-flash', name: 'DeepSeek V4.1 Flash (海师自部署)', source: '海师自部署', contextWindow: 300000, maxTokens: 80000, requestLimitBytes: 1048576, requestLimitLabel: '1 MB', tools: 'native', vision: true, summary: '唯一能看图的模型', notes: ['支持图片输入'] },
       { id: 'kimi-k3', name: 'Kimi K3 (海师阿里云)', source: '海师阿里云', contextWindow: 1000000, maxTokens: 8192, tools: 'emulated', vision: false, summary: '偏思考的重型模型', notes: ['不支持图片'] },
     ],
   };
@@ -214,6 +214,9 @@ check('ENDPOINT 指向宿主挂载前缀', () => {
   assert.match(text, /支持图片/);
   assert.match(text, /原生工具调用/);
   assert.match(text, /模拟工具调用/);
+  // 自部署那个要标「请求体上限 1 MB」，不能写成上下文
+  assert.match(text, /请求体上限 1 MB/);
+  assert.equal(/上下文 300,000/.test(text), false, '自部署模型不该显示成上下文上限');
   results.push(['PASS', '可用模型卡片渲染出简介与能力标签']);
 }
 

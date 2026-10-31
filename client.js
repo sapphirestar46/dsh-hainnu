@@ -593,7 +593,9 @@ window.__ModuleLoader__.load({
             ] }),
             jsx('div', { className: 'hn-model-meta', key: 'm', children: [
               jsx('span', { key: 'id', className: 'mono', children: String(item.id || '') }),
-              jsx('span', { key: 'cw', children: '上下文 ' + fmtNum(item.contextWindow) }),
+              item.requestLimitLabel
+                ? jsx('span', { key: 'cw', children: '请求体上限 ' + String(item.requestLimitLabel) })
+                : jsx('span', { key: 'cw', children: '上下文 ' + fmtNum(item.contextWindow) }),
               jsx('span', { key: 'mt', children: '输出上限 ' + fmtNum(item.maxTokens) }),
             ] }),
             item.summary ? jsx('div', { className: 'hn-model-desc', key: 'd', children: String(item.summary) }) : null,

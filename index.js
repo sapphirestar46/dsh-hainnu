@@ -434,6 +434,8 @@ export function apply(ctx, config) {
       source: model.source,
       contextWindow: model.contextWindow,
       maxTokens: model.maxTokens,
+      requestLimitBytes: model.requestLimitBytes === undefined ? null : model.requestLimitBytes,
+      requestLimitLabel: model.requestLimitLabel === undefined ? '' : model.requestLimitLabel,
       input: model.input,
       tools: model.tools,
       vision: model.vision === true,
