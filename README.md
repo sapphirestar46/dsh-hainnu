@@ -151,6 +151,6 @@ npm test
 
 MIT。登录流程与代理转发语义来自 [hainnu-proxy](https://github.com/sapphirestar46/hainnu-proxy)（MIT），本项目把它重写成了 DSH 插件。
 
-那个 Python 版项目仍然有用：**如果你想在其他 agent（Claude Code、Cursor、Cline 等）上使用海师自部署的 DeepSeek，
-或者在局域网里把 API 分发给同学用，直接用 [hainnu-proxy](https://github.com/sapphirestar46/hainnu-proxy) 更合适**——
+那个 Python 版项目仍然有用：**如果你想在其他 agent（WorkBuddy、ZCode、Trae 等）上使用海师自部署的 DeepSeek，
+或者把 API 分发给自己的其他设备，直接用 [hainnu-proxy](https://github.com/sapphirestar46/hainnu-proxy) 更合适**——
 它不依赖 DSH，纯 Python 起一个 OpenAI 兼容服务就行。本插件则是给 DSH 用户准备的完整封装（自动登录、Token 续期、模型配置、面板）。
