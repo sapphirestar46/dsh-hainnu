@@ -24,6 +24,22 @@ window.__ModuleLoader__.load({
     const jsxRuntime = require('react/jsx-runtime');
     const jsx = jsxRuntime.jsx;
 
+    // DSH 原生的 Tag 组件：模型角标、更新气泡都用它，保证和内置插件同款（浅蓝底气泡）。
+    // 拿不到就退回自己复刻的 .hn-pill（tone 与原生完全一致）。
+    const primitives = (() => {
+      try {
+        return require('@deepseek-ai/dsh-client-ui-primitives');
+      } catch (error) {
+        return null;
+      }
+    })();
+    const NativeTag = primitives !== null && primitives !== undefined && typeof primitives.Tag === 'function' ? primitives.Tag : null;
+    function tagNode(text, tone) {
+      const value = tone === undefined ? 'info' : tone;
+      if (NativeTag !== null) return jsx(NativeTag, { tone: value, children: text });
+      return jsx('span', { className: 'hn-pill', 'data-tone': value, children: text });
+    }
+
     const ENDPOINT = '/dsh-hainnu';
     const RELEASES_URL = 'https://github.com/sapphirestar46/dsh-hainnu/releases';
     const PANEL_ID = 'hainnu-account';
@@ -120,17 +136,21 @@ window.__ModuleLoader__.load({
 .hn-tag.hi { color: var(--dsw-alias-brand-primary); border-color: currentColor; }
 .hn-tag.build { font-weight: 600; color: var(--dsw-alias-brand-primary); border-color: transparent;
   background: color-mix(in srgb, var(--dsw-alias-brand-primary) 14%, var(--dsw-alias-settings-card-fill)); }
-.hn-update { font-size: 11.5px; line-height: 18px; padding: 0 8px; border-radius: 9px; text-decoration: none;
-  color: var(--dsw-alias-brand-primary);
-  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 14%, var(--dsw-alias-settings-card-fill)); }
-.hn-update:hover { text-decoration: underline; }
+/* 与 DSH 原生 Tag 同款的浅色气泡（数据里 tone=info 就是内置 1017 角标的浅蓝底）。
+   原生组件可用时优先用原生组件，这段是兜底，样式逐像素照抄内置 .tag。 */
+.hn-pill { display: inline-flex; align-items: center; border-radius: 999px; corner-shape: round;
+  padding: 1px 8px; font-size: 11px; line-height: 17px; font-weight: 500; white-space: nowrap; }
+.hn-pill[data-tone="info"] {
+  background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 10%, transparent);
+  color: var(--dsw-alias-state-business-primary); }
+.hn-pill[data-tone="warning"] {
+  background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 12%, transparent);
+  color: var(--dsw-alias-state-warn-primary); }
+.hn-update-link { display: inline-flex; text-decoration: none; }
+.hn-side-badge { margin-left: 6px; cursor: pointer; }
 
 /* --- composer 里的模型标签角标（和 DSH 内置的 1017 角标同款） --- */
 .hn-mlabel { display: inline-flex; align-items: center; gap: 4px; vertical-align: baseline; white-space: nowrap; }
-/* 原生 1017 角标的样式：浅蓝底气泡 + 蓝字 */
-.hn-mtag { font-size: 11px; line-height: 16px; padding: 0 6px; border-radius: 8px; font-weight: 600;
-  color: var(--dsw-alias-brand-primary);
-  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 14%, var(--dsw-alias-settings-card-fill)); }
 .hn-model-notes { margin: 0; padding-left: 18px; font-size: 11.5px; line-height: 18px;
   color: var(--dsw-alias-label-tertiary); }
 .hn-chip { border: 1px solid var(--dsw-alias-border-l2); border-radius: 6px; padding: 1px 8px;
@@ -312,6 +332,75 @@ window.__ModuleLoader__.load({
       return jsx('span', { className: 'hn-badge ' + (kind || 'off'), children: text });
     }
 
+    /* ---------------------------------------------------------- 更新检查 */
+
+    /**
+     * 面板和左侧栏入口共用这一份更新检查结果：
+     * 只查一次宿主接口（宿主侧还有 10 分钟缓存），订阅者各自渲染。
+     * phase: loading | ready | error
+     */
+    const updateFeed = (() => {
+      let snapshot = { phase: 'loading', info: null, error: '' };
+      const listeners = new Set();
+      let started = false;
+      let inflight = false;
+      const emit = () => {
+        for (const listener of Array.from(listeners)) {
+          try {
+            listener(snapshot);
+          } catch (error) {
+            /* 单个订阅者出错不影响其它人 */
+          }
+        }
+      };
+      const load = async () => {
+        if (inflight) return;
+        inflight = true;
+        try {
+          const payload = await call('/check-update');
+          if (payload !== null && payload !== undefined && payload.ok === true && payload.update !== undefined) {
+            snapshot = { phase: 'ready', info: payload.update, error: '' };
+          } else {
+            snapshot = { phase: 'error', info: null, error: '更新检查返回了意外内容' };
+          }
+        } catch (error) {
+          snapshot = { phase: 'error', info: null, error: String(error !== null && error !== undefined && error.message ? error.message : error) };
+        } finally {
+          inflight = false;
+        }
+        emit();
+      };
+      return {
+        subscribe(listener) {
+          listeners.add(listener);
+          // 失败允许下次挂载时重试；成功的结果就吃宿主那 10 分钟缓存，不再打扰
+          if (!started || snapshot.phase === 'error') {
+            started = true;
+            load();
+          }
+          return () => listeners.delete(listener);
+        },
+        get() {
+          return snapshot;
+        },
+      };
+    })();
+
+    function useUpdateFeed() {
+      const [snapshot, setSnapshot] = react.useState(() => updateFeed.get());
+      react.useEffect(() => {
+        let alive = true;
+        const unsubscribe = updateFeed.subscribe((next) => {
+          if (alive) setSnapshot(next);
+        });
+        return () => {
+          alive = false;
+          unsubscribe();
+        };
+      }, []);
+      return snapshot;
+    }
+
     function kv(pairs) {
       const children = [];
       for (const [key, value] of pairs) {
@@ -325,7 +414,87 @@ window.__ModuleLoader__.load({
 
     function HainnuIcon(props) {
       const size = props !== null && props !== undefined && typeof props.size === 'number' ? props.size : 18;
+      // 有新版本时，在侧栏「海师账号」右边挂一个浅蓝气泡。
+      // 侧栏的行是宿主渲染的（图标槽 + 标题文本），面板标题不接受节点，
+      // 所以这里把气泡插进标题 span，并用 MutationObserver 在重渲染后补回。
+      const feed = useUpdateFeed();
+      const available = feed.phase === 'ready' && feed.info !== null && feed.info !== undefined && feed.info.hasUpdate === true;
+      const latest = available ? String(feed.info.latest || '') : '';
+      const href = available ? String(feed.info.url || RELEASES_URL) : '';
+      const title = available ? (latest === '' ? '有新版本可用' : '有新版本 v' + latest) : '';
+      const svgRef = react.useRef(null);
+
+      react.useEffect(() => {
+        const node = svgRef.current;
+        if (node === null || node === undefined || typeof node.closest !== 'function') return undefined;
+        const row = node.closest('button');
+        if (row === null || row === undefined) return undefined;
+        const glyph = node.parentNode;
+        let badge = null;
+        const findTitle = () => {
+          const children = Array.from(row.children);
+          for (const child of children) {
+            if (child !== glyph && child.tagName === 'SPAN') return child;
+          }
+          return null;
+        };
+        const removeBadge = () => {
+          if (badge !== null && badge.parentNode !== null) badge.parentNode.removeChild(badge);
+          badge = null;
+        };
+        const open = () => {
+          try {
+            window.open(href, '_blank', 'noopener,noreferrer');
+          } catch (error) {
+            /* 打不开就算了，不打扰 */
+          }
+        };
+        const paint = () => {
+          if (!available) {
+            removeBadge();
+            return;
+          }
+          const titleEl = findTitle();
+          if (titleEl === null) {
+            // 侧栏收起时只显示图标，没有标题位，先不挂
+            removeBadge();
+            return;
+          }
+          if (badge === null) {
+            badge = document.createElement('span');
+            badge.className = 'hn-pill hn-side-badge';
+            badge.setAttribute('data-tone', 'info');
+            badge.setAttribute('role', 'link');
+            badge.setAttribute('tabindex', '0');
+            badge.addEventListener('click', (event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              open();
+            });
+            badge.addEventListener('keydown', (event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                event.stopPropagation();
+                open();
+              }
+            });
+          }
+          if (badge.parentNode !== titleEl) titleEl.appendChild(badge);
+          if (badge.textContent !== '更新可用') badge.textContent = '更新可用';
+          if (badge.getAttribute('title') !== title) badge.setAttribute('title', title);
+          if (badge.dataset.href !== href) badge.dataset.href = href;
+        };
+        paint();
+        const observer = typeof MutationObserver === 'function' ? new MutationObserver(paint) : null;
+        if (observer !== null) observer.observe(row, { childList: true, subtree: true });
+        return () => {
+          if (observer !== null) observer.disconnect();
+          removeBadge();
+        };
+      }, [available, href, title]);
+
       return jsx('svg', {
+        ref: svgRef,
         width: size,
         height: size,
         viewBox: '0 0 24 24',
@@ -573,32 +742,14 @@ window.__ModuleLoader__.load({
       const [username, setUsername] = react.useState('');
       const [password, setPassword] = react.useState('');
       const [touchedName, setTouchedName] = react.useState(false);
-      // 更新检查结果：null = 还没查完
-      const [updateInfo, setUpdateInfo] = react.useState(null);
+      // 更新检查结果（面板与左侧栏共用一份，见 updateFeed）
+      const updateState = useUpdateFeed();
       const alive = react.useRef(true);
 
       react.useEffect(() => {
         alive.current = true;
         return () => {
           alive.current = false;
-        };
-      }, []);
-
-      // 开机查一次仓库有没有新版本（宿主侧有 10 分钟缓存，不会频繁打网络）
-      react.useEffect(() => {
-        let mounted = true;
-        (async () => {
-          try {
-            const payload = await call('/check-update');
-            if (mounted && payload !== null && payload.ok === true && payload.update !== undefined) {
-              setUpdateInfo(payload.update);
-            }
-          } catch (cause) {
-            if (mounted) setUpdateInfo({ error: String(cause && cause.message ? cause.message : cause) });
-          }
-        })();
-        return () => {
-          mounted = false;
         };
       }, []);
 
@@ -690,26 +841,29 @@ window.__ModuleLoader__.load({
       // 版本 / 更新提示
       const currentVersion = status !== null && typeof status.version === 'string' ? status.version : '';
       const updateBadge = (() => {
-        if (updateInfo === null) return badge('检查更新…', 'off');
-        if (updateInfo.error) {
+        if (updateState.phase === 'loading') return badge('检查更新…', 'off');
+        if (updateState.phase === 'error') {
           return jsx('a', {
-            className: 'hn-update',
+            className: 'hn-update-link',
             key: 'up',
             href: RELEASES_URL,
             target: '_blank',
             rel: 'noreferrer noopener',
-            title: String(updateInfo.error),
-            children: '检查更新失败，手动查看 ↗',
+            title: String(updateState.error || '更新检查失败'),
+            children: tagNode('检查更新失败', 'warning'),
           });
         }
-        if (updateInfo.hasUpdate === true) {
+        const info = updateState.info !== null && updateState.info !== undefined ? updateState.info : {};
+        if (info.hasUpdate === true) {
+          const latest = String(info.latest || '');
           return jsx('a', {
-            className: 'hn-update',
+            className: 'hn-update-link',
             key: 'up',
-            href: String(updateInfo.url || RELEASES_URL),
+            href: String(info.url || RELEASES_URL),
             target: '_blank',
             rel: 'noreferrer noopener',
-            children: '有新版本 ' + String(updateInfo.latest || '') + ' ↗',
+            title: latest === '' ? '有新版本可用' : '有新版本 v' + latest,
+            children: tagNode('更新可用', 'info'),
           });
         }
         return badge('已是最新', 'ok');
@@ -775,56 +929,6 @@ window.__ModuleLoader__.load({
       ] }));
 
 
-      // 1.2 可用模型：每个模型的来源、规格、能力与一句话简介
-      const catalog = status !== null && Array.isArray(status.models) ? status.models : [];
-      if (catalog.length > 0) {
-        cards.push(jsx('div', { className: 'hn-card', key: 'catalog', children: [
-          jsx('h3', { children: '可用模型', key: 't' }),
-          jsx('div', { className: 'hn-catalog', key: 'l', children: catalog.map((item) => jsx('div', { className: 'hn-model', key: String(item.id || item.name), children: [
-            jsx('div', { className: 'hn-model-head', key: 'h', children: [
-              // 名字里已经带了发行号时，把它摘出来做成徽标（和 DSH 官方的挂法一致）
-              jsx('span', {
-                className: 'hn-model-name',
-                key: 'n',
-                children: item.build
-                  ? String(item.name || item.id || '').replace(new RegExp('\\s+' + String(item.build) + '(?=\\s|$)'), '')
-                  : String(item.name || item.id || ''),
-              }),
-              item.build ? jsx('span', { className: 'hn-tag build', key: 'b', children: String(item.build) }) : null,
-              item.source ? jsx('span', { className: 'hn-tag' + (String(item.source).includes('自部署') ? ' hi' : ''), key: 's', children: String(item.source) }) : null,
-            ] }),
-            jsx('div', { className: 'hn-model-meta', key: 'm', children: [
-              jsx('span', { key: 'id', className: 'mono', children: String(item.id || '') }),
-              item.requestLimitLabel
-                ? jsx('span', { key: 'cw', children: '请求体上限 ' + String(item.requestLimitLabel) })
-                : jsx('span', { key: 'cw', children: '上下文 ' + fmtNum(item.contextWindow) }),
-              jsx('span', { key: 'mt', children: '输出上限 ' + fmtNum(item.maxTokens) }),
-            ] }),
-            item.summary ? jsx('div', { className: 'hn-model-desc', key: 'd', children: String(item.summary) }) : null,
-            jsx('div', { className: 'hn-model-tags', key: 'g', children: [
-              item.vision === true
-                ? jsx('span', { className: 'hn-tag ok', key: 'v', children: '支持图片' })
-                : jsx('span', { className: 'hn-tag off', key: 'v', children: '纯文本' }),
-              item.tools === 'native'
-                ? jsx('span', { className: 'hn-tag ok', key: 'w', children: '原生工具调用' })
-                : jsx('span', { className: 'hn-tag warn', key: 'w', children: '模拟工具调用' }),
-            ] }),
-            Array.isArray(item.notes) && item.notes.length > 0
-              ? jsx('ul', { className: 'hn-model-notes', key: 'k', children: item.notes.map((note, index) => jsx('li', { key: String(index), children: String(note) })) })
-              : null,
-          ] }, String(item.id || item.name))) }),
-        ] }));
-      }
-
-      // 1.5 用量（经过代理的请求）
-      cards.push(jsx('div', { className: 'hn-card', key: 'usage', children: [
-        jsx('h3', { children: '用量', key: 't' }),
-        jsx(UsagePanels, {
-          key: 'u',
-          usage: status !== null && status.usage !== undefined ? status.usage : null,
-        }),
-      ] }));
-
       // 2. 账号
       cards.push(jsx('div', { className: 'hn-card', key: 'account', children: [
         jsx('h3', { children: '账号', key: 't' }),
@@ -872,7 +976,57 @@ window.__ModuleLoader__.load({
         ] }),
       ] }));
 
-      // 3. 代理与模型
+      // 3. 可用模型：每个模型的来源、规格、能力与一句话简介
+      const catalog = status !== null && Array.isArray(status.models) ? status.models : [];
+      if (catalog.length > 0) {
+        cards.push(jsx('div', { className: 'hn-card', key: 'catalog', children: [
+          jsx('h3', { children: '可用模型', key: 't' }),
+          jsx('div', { className: 'hn-catalog', key: 'l', children: catalog.map((item) => jsx('div', { className: 'hn-model', key: String(item.id || item.name), children: [
+            jsx('div', { className: 'hn-model-head', key: 'h', children: [
+              // 名字里已经带了发行号时，把它摘出来做成徽标（和 DSH 官方的挂法一致）
+              jsx('span', {
+                className: 'hn-model-name',
+                key: 'n',
+                children: item.build
+                  ? String(item.name || item.id || '').replace(new RegExp('\\s+' + String(item.build) + '(?=\\s|$)'), '')
+                  : String(item.name || item.id || ''),
+              }),
+              item.build ? jsx('span', { className: 'hn-tag build', key: 'b', children: String(item.build) }) : null,
+              item.source ? jsx('span', { className: 'hn-tag' + (String(item.source).includes('自部署') ? ' hi' : ''), key: 's', children: String(item.source) }) : null,
+            ] }),
+            jsx('div', { className: 'hn-model-meta', key: 'm', children: [
+              jsx('span', { key: 'id', className: 'mono', children: String(item.id || '') }),
+              item.requestLimitLabel
+                ? jsx('span', { key: 'cw', children: '请求体上限 ' + String(item.requestLimitLabel) })
+                : jsx('span', { key: 'cw', children: '上下文 ' + fmtNum(item.contextWindow) }),
+              jsx('span', { key: 'mt', children: '输出上限 ' + fmtNum(item.maxTokens) }),
+            ] }),
+            item.summary ? jsx('div', { className: 'hn-model-desc', key: 'd', children: String(item.summary) }) : null,
+            jsx('div', { className: 'hn-model-tags', key: 'g', children: [
+              item.vision === true
+                ? jsx('span', { className: 'hn-tag ok', key: 'v', children: '支持图片' })
+                : jsx('span', { className: 'hn-tag off', key: 'v', children: '纯文本' }),
+              item.tools === 'native'
+                ? jsx('span', { className: 'hn-tag ok', key: 'w', children: '原生工具调用' })
+                : jsx('span', { className: 'hn-tag warn', key: 'w', children: '模拟工具调用' }),
+            ] }),
+            Array.isArray(item.notes) && item.notes.length > 0
+              ? jsx('ul', { className: 'hn-model-notes', key: 'k', children: item.notes.map((note, index) => jsx('li', { key: String(index), children: String(note) })) })
+              : null,
+          ] }, String(item.id || item.name))) }),
+        ] }));
+      }
+
+      // 4. 用量（经过代理的请求）
+      cards.push(jsx('div', { className: 'hn-card', key: 'usage', children: [
+        jsx('h3', { children: '用量', key: 't' }),
+        jsx(UsagePanels, {
+          key: 'u',
+          usage: status !== null && status.usage !== undefined ? status.usage : null,
+        }),
+      ] }));
+
+      // 5. 代理与模型
       cards.push(jsx('div', { className: 'hn-card', key: 'proxy', children: [
         jsx('h3', { children: '代理与模型', key: 't' }),
         jsx('div', { className: 'hn-actions', key: 'a', children: [
@@ -922,7 +1076,7 @@ window.__ModuleLoader__.load({
         proxy.lastError ? jsx('div', { className: 'hn-alert err', key: 'pe', style: { marginTop: '10px' }, children: '代理错误：' + String(proxy.lastError) }) : null,
       ] }));
 
-      // 4. 开关
+      // 6. 开关
       cards.push(jsx('div', { className: 'hn-card', key: 'opts', children: [
         jsx('h3', { children: '启动行为', key: 't' }),
         jsx('div', { className: 'hn-rows', key: 'r', children: [
@@ -949,7 +1103,7 @@ window.__ModuleLoader__.load({
         ] }),
       ] }));
 
-      // 5. 诊断
+      // 7. 诊断
       if (state.lastError || state.configNote || settings.upstream) {
         const rows = [];
         if (settings.upstream) rows.push(['上游', jsx('span', { className: 'mono', children: String(settings.upstream) })]);
@@ -1008,7 +1162,8 @@ window.__ModuleLoader__.load({
           children: [
             jsx('span', { key: 'n', children: label }),
             ' ',
-            jsx('span', { className: 'hn-mtag', key: 'b', children: badge }),
+            // 用 DSH 原生 Tag（tone=info）——和内置 1017 角标同款，不能再自己调颜色
+            jsx('span', { key: 'b', children: tagNode(badge, 'info') }),
           ],
         });
 

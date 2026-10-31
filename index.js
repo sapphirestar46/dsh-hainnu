@@ -33,7 +33,7 @@ export const name = 'dsh-hainnu';
 export const inject = ['webServer'];
 
 const ROUTE_PREFIX = '/dsh-hainnu';
-const VERSION = '0.2.1';
+const VERSION = '0.2.2';
 const REPO = 'sapphirestar46/dsh-hainnu';
 const REPO_RELEASES = `https://github.com/${REPO}/releases`;
 const REPO_LATEST_API = `https://api.github.com/repos/${REPO}/releases/latest`;

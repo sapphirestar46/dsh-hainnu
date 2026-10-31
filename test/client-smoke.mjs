@@ -137,7 +137,9 @@ check('composer 模型标签：海师模型挂 1017 角标，其它模型原样�
   const text = JSON.stringify(local);
   assert.match(text, /DeepSeek V4\.1 Flash \(海师自部署\)/);
   assert.match(text, /1017/);
-  assert.match(text, /hn-mtag/);
+  // 用 DSH 原生 Tag（浅蓝 info 气泡）的兜底样式，不能再是自定义灰底
+  assert.match(text, /hn-pill/);
+  assert.match(text, /"data-tone":"info"/);
 
   // 其它海师模型不加角标
   assert.equal(mod.ComposerModelLabel({ provider: { id: 'hainnu' }, model: { id: 'kimi-k3', name: 'Kimi K3 (海师阿里云)' } }), 'Kimi K3 (海师阿里云)');
@@ -214,6 +216,57 @@ check('ENDPOINT 指向宿主挂载前缀', () => {
   assert.equal(mod.ENDPOINT, '/dsh-hainnu');
 });
 
+check('更新气泡：原生 Tag 同款浅蓝底，侧栏注入且点击打开仓库', () => {
+  const css = mod.CSS || '';
+  assert.match(css, /\.hn-pill \{/);
+  assert.match(css, /data-tone="info"/);
+  assert.match(css, /state-business-primary/);
+  assert.match(css, /border-radius: 999px/);
+  assert.match(css, /\.hn-side-badge/);
+  assert.match(source, /更新可用/);
+  assert.match(source, /MutationObserver/);
+  assert.match(source, /hn-side-badge/);
+  assert.match(source, /dsh-client-ui-primitives/);
+});
+
+
+/* 更新检查：面板版本号右侧渲染「更新可用」浅蓝气泡，点击打开仓库 */
+{
+  const statusPayload = {
+    ok: true,
+    version: '0.2.1',
+    state: { hasToken: true, hasPassword: true, username: '20230001', models: ['deepseek-flash'] },
+    endpoint: { baseURL: 'http://127.0.0.1:8787/v1', modelId: 'deepseek-flash' },
+    proxy: { mode: 'running', baseURL: 'http://127.0.0.1:8787/v1', models: ['deepseek-flash'], portal: { enabled: true, threads: 0 } },
+    portal: { enabled: true, loggedIn: false, models: [] },
+    settings: { profile: 'desktop', upstream: 'https://chat.hainnu.edu.cn', apiKeyEnv: 'HAINNU_API_KEY' },
+    security: { allowRemote: false, allowAnonymous: false, apiAuth: 'keys', loginGuard: {}, originGuard: true },
+    usage: null,
+    models: [],
+  };
+  const updatePayload = { ok: true, update: { hasUpdate: true, latest: '0.2.2', url: 'https://github.com/sapphirestar46/dsh-hainnu/releases', current: '0.2.1' } };
+  globalThis.fetch = async (url) => ({ ok: true, status: 200, json: async () => (String(url).includes('check-update') ? updatePayload : statusPayload) });
+
+  const originalEffect = reactStub.useEffect;
+  reactStub.useEffect = (fn) => {
+    hookIndex += 1;
+    try { fn(); } catch { /* 清理函数失败不影响断言 */ }
+  };
+  hookState = [];
+  hookIndex = 0;
+  mod.HainnuPanel();
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  reactStub.useEffect = originalEffect;
+
+  hookIndex = 0;
+  const tree = mod.HainnuPanel();
+  const text = JSON.stringify(tree);
+  assert.match(text, /更新可用/);
+  assert.match(text, /hn-update-link/);
+  assert.match(text, /0\.2\.2/, '气泡应有新版本号的 title');
+  assert.match(text, /data-tone/);
+  results.push(['PASS', '版本号右侧渲染「更新可用」浅蓝气泡']);
+}
 
 /* 可用模型卡片：桩 fetch + 真实 effect，验证宿主的 models 字段能渲染出简介与能力标签 */
 {
