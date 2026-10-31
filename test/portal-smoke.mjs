@@ -147,6 +147,12 @@ ok('代理模型清单合并两个上游', () => {
   assert.equal(parseToolCall('普通回答，没有调用'), null);
   assert.equal(parseToolCall('<tool_call>not json</tool_call>'), null);
   assert.equal(parseToolCall('<tool_call>{"arguments":{}}</tool_call>'), null);
+  // qwen 偶尔把开标记写两遍；也有模型漏掉闭标记
+  assert.deepEqual(parseToolCall('<tool_call>\n<tool_call>\n{"name":"x","arguments":{}}</tool_call>'), {
+    name: 'x',
+    arguments: '{}',
+  });
+  assert.deepEqual(parseToolCall('<tool_call>{"name":"y","arguments":{"a":1}}'), { name: 'y', arguments: '{"a":1}' });
 
   console.log('  ok  工具提示词与 tool_call 解析');
   passed += 1;
