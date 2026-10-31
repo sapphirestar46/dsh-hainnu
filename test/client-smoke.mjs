@@ -124,9 +124,29 @@ check('样式与词典都通过 ctx.effect 托管', () => {
   assert.ok(styleApplied >= 1);
 });
 
-check('注册了 main 与 sidebar.panellist 两个 slot', () => {
-  assert.deepEqual(injected, ['main', 'sidebar.panellist']);
-  assert.equal(registrations.length, 2);
+check('注册了 main、sidebar.panellist 和 composer 模型标签三个 slot', () => {
+  assert.deepEqual(injected, ['main', 'sidebar.panellist', 'conversation.input.model.label']);
+  assert.equal(registrations.length, 3);
+});
+
+check('composer 模型标签：海师模型挂 1017 角标，其它模型原样返回', () => {
+  const local = mod.ComposerModelLabel({
+    provider: { id: 'hainnu' },
+    model: { id: 'deepseek-flash', name: 'DeepSeek V4.1 Flash 1017 (海师自部署)' },
+  });
+  const text = JSON.stringify(local);
+  assert.match(text, /DeepSeek V4\.1 Flash \(海师自部署\)/);
+  assert.match(text, /1017/);
+  assert.match(text, /hn-mtag/);
+
+  // 其它海师模型不加角标
+  assert.equal(mod.ComposerModelLabel({ provider: { id: 'hainnu' }, model: { id: 'kimi-k3', name: 'Kimi K3 (海师阿里云)' } }), 'Kimi K3 (海师阿里云)');
+  // 官方 provider 且名字不匹配时也原样返回
+  assert.equal(mod.ComposerModelLabel({ provider: { id: 'deepseek-account' }, model: { id: 'deepseek-flash', name: 'DeepSeek-V4.1-Flash 1017' } }), 'DeepSeek-V4.1-Flash 1017');
+  // 官方原样名字：复刻 DSH 内置角标（避免我们的注册把它顶掉）
+  assert.match(JSON.stringify(mod.ComposerModelLabel({ provider: { id: 'deepseek-official' }, model: { id: 'deepseek-flash', name: 'DeepSeek-V4.1-Flash' } })), /1017/);
+  // 没有 model 字段也不崩
+  assert.equal(mod.ComposerModelLabel({}), '');
 });
 
 check('左侧栏入口 id 与主面板 key 一致，order=0，中文标签', () => {

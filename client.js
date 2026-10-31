@@ -118,6 +118,12 @@ window.__ModuleLoader__.load({
 .hn-tag.off { color: var(--dsw-alias-label-tertiary); }
 .hn-tag.hi { color: var(--dsw-alias-brand-primary); border-color: currentColor; }
 .hn-tag.build { color: var(--dsw-alias-label-primary); border-color: currentColor; font-weight: 600; }
+
+/* --- composer 里的模型标签角标（和 DSH 内置的 1017 角标同款） --- */
+.hn-mlabel { display: inline-flex; align-items: center; gap: 4px; vertical-align: baseline; white-space: nowrap; }
+.hn-mtag { font-size: 11px; line-height: 16px; padding: 0 6px; border-radius: 8px;
+  color: var(--dsw-alias-brand-primary); background: var(--dsw-alias-fill-l1);
+  border: 1px solid var(--dsw-alias-border-l2); font-weight: 600; }
 .hn-model-notes { margin: 0; padding-left: 18px; font-size: 11.5px; line-height: 18px;
   color: var(--dsw-alias-label-tertiary); }
 .hn-chip { border: 1px solid var(--dsw-alias-border-l2); border-radius: 6px; padding: 1px 8px;
@@ -913,6 +919,51 @@ window.__ModuleLoader__.load({
 
     const inject = ['slots', 'locale'];
 
+
+    /**
+     * 对话窗口右下角模型选择处的标签。
+     *
+     * DSH 内置插件（ui-deepseek-model-label-1017）会往 conversation.input.model.label
+     * 槽位注册一个组件，但它写死只认 deepseek-official / deepseek-account 两个 provider，
+     * 我们的 provider 是 hainnu，拿不到。这里往同一个槽位注册我们自己的版本。
+     *
+     * 槽位给到的 props 是 { provider, model, t }；不认识的模型原样返回 model.name，
+     * 这样即使我们的注册把内置插件顶掉，官方模型的角标也照旧。
+     */
+    const LABEL_BUILD = { 'deepseek-flash': '1017' };
+
+    function ComposerModelLabel(props) {
+      const source = props !== null && props !== undefined && typeof props === 'object' ? props : {};
+      const provider = source.provider !== null && typeof source.provider === 'object' ? source.provider : {};
+      const model = source.model !== null && typeof source.model === 'object' ? source.model : {};
+      const name = typeof model.name === 'string' ? model.name : '';
+      const providerId = String(provider.id === undefined ? '' : provider.id);
+      const modelId = String(model.id === undefined ? '' : model.id);
+
+      const withBadge = (label, badge) =>
+        jsx('span', {
+          className: 'hn-mlabel',
+          children: [
+            jsx('span', { key: 'n', children: label }),
+            ' ',
+            jsx('span', { className: 'hn-mtag', key: 'b', children: badge }),
+          ],
+        });
+
+      // 官方 provider 的角标本来由 DSH 自己负责；万一我们排到它后面，这里原样复刻。
+      if (
+        (providerId === 'deepseek-official' || providerId === 'deepseek-account') &&
+        modelId === 'deepseek-flash' &&
+        name === 'DeepSeek-V4.1-Flash'
+      ) {
+        return withBadge(name, '1017');
+      }
+
+      const badge = providerId === 'hainnu' && LABEL_BUILD[modelId] !== undefined ? LABEL_BUILD[modelId] : '';
+      if (badge === '') return name;
+      return withBadge(name.replace(new RegExp('\\s+' + badge + '(?=\\s|$)'), ''), badge);
+    }
+
     function apply(ctx) {
       try {
         if (ctx.effect !== undefined && typeof ctx.effect === 'function') {
@@ -968,12 +1019,28 @@ window.__ModuleLoader__.load({
       } catch (error) {
         console.warn('[dsh-hainnu] 左侧栏入口注册失败：', error);
       }
+
+      // 对话窗口右下角的模型标签：给海师的 DeepSeek 挂 1017 发行角标。
+      try {
+        if (ctx.slots !== undefined && ctx.slots !== null && typeof ctx.slots.register === 'function') {
+          const registerLabel = () =>
+            ctx.slots.register({ name: 'conversation.input.model.label' }, ComposerModelLabel);
+          if (typeof ctx.slots.inject === 'function') {
+            ctx.slots.inject('conversation.input.model.label', registerLabel);
+          } else {
+            registerLabel();
+          }
+        }
+      } catch (error) {
+        console.warn('[dsh-hainnu] 模型标签角标注册失败：', error);
+      }
     }
 
     exports.apply = apply;
     exports.inject = inject;
     // 测试面：模块系统只读 apply / inject。
     exports.HainnuPanel = HainnuPanel;
+    exports.ComposerModelLabel = ComposerModelLabel;
     exports.HainnuIcon = HainnuIcon;
     exports.NS = NS;
     exports.ENDPOINT = ENDPOINT;
