@@ -10,3 +10,5 @@
         autoStart: true
         autoLogin: true
         writeConfig: true
+        portalEnabled: true
+        portalOrigin: https://hsaixy.hainnu.edu.cn:9443
