@@ -377,7 +377,11 @@ export function apply(ctx, config) {
       modelId: settings.modelId,
       modelName: LOCAL_MODEL.name,
       // 显示名迁移：旧名字（含上一版「(海师自部署)」）都会被换成带 1017 的新名字。
-      legacyNames: ['DeepSeek V4.1 Flash (海师)', 'DeepSeek V4.1 Flash (海师自部署)'],
+      legacyNames: [
+        'DeepSeek V4.1 Flash (海师)',
+        'DeepSeek V4.1 Flash (海师自部署)',
+        'DeepSeek V4.1 Flash (海师阿里云)',
+      ],
       // 同一 provider 下的三个平台模型：海师大智汇 / 阿里云百炼。
       extraModels:
         portal === null

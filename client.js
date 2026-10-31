@@ -930,7 +930,7 @@ window.__ModuleLoader__.load({
      * 槽位给到的 props 是 { provider, model, t }；不认识的模型原样返回 model.name，
      * 这样即使我们的注册把内置插件顶掉，官方模型的角标也照旧。
      */
-    const LABEL_BUILD = { 'deepseek-flash': '1017' };
+    const LABEL_BUILD = { 'deepseek-flash': '1017', 'deepseek-v4.1-flash': '1017' };
 
     function ComposerModelLabel(props) {
       const source = props !== null && props !== undefined && typeof props === 'object' ? props : {};

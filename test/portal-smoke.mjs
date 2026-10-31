@@ -68,6 +68,10 @@ ok('模型目录：四个模型，两个来源', () => {
   // 和 DSH 官方给 DeepSeek Flash 挂的 1017 发行标对齐
   assert.equal(local.build, '1017');
   assert.match(local.name, /1017/);
+  // 阿里云那个行为指纹与自部署一致，同样标 1017
+  const portalDs = modelById('deepseek-v4.1-flash');
+  assert.equal(portalDs.build, '1017');
+  assert.match(portalDs.name, /1017/);
 });
 
 /* ------------------------------------------------------------ 代理路由 */
