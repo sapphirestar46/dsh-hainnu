@@ -25,6 +25,7 @@ window.__ModuleLoader__.load({
     const jsx = jsxRuntime.jsx;
 
     const ENDPOINT = '/dsh-hainnu';
+    const RELEASES_URL = 'https://github.com/sapphirestar46/dsh-hainnu/releases';
     const PANEL_ID = 'hainnu-account';
     const NS = 'hainnu';
     const CSS_TAG = 'dsh-hainnu/panel.css';
@@ -117,13 +118,19 @@ window.__ModuleLoader__.load({
 .hn-tag.warn { color: var(--dsw-alias-state-warn-primary); border-color: currentColor; }
 .hn-tag.off { color: var(--dsw-alias-label-tertiary); }
 .hn-tag.hi { color: var(--dsw-alias-brand-primary); border-color: currentColor; }
-.hn-tag.build { color: var(--dsw-alias-label-primary); border-color: currentColor; font-weight: 600; }
+.hn-tag.build { font-weight: 600; color: var(--dsw-alias-brand-primary); border-color: transparent;
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 14%, var(--dsw-alias-settings-card-fill)); }
+.hn-update { font-size: 11.5px; line-height: 18px; padding: 0 8px; border-radius: 9px; text-decoration: none;
+  color: var(--dsw-alias-brand-primary);
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 14%, var(--dsw-alias-settings-card-fill)); }
+.hn-update:hover { text-decoration: underline; }
 
 /* --- composer 里的模型标签角标（和 DSH 内置的 1017 角标同款） --- */
 .hn-mlabel { display: inline-flex; align-items: center; gap: 4px; vertical-align: baseline; white-space: nowrap; }
-.hn-mtag { font-size: 11px; line-height: 16px; padding: 0 6px; border-radius: 8px;
-  color: var(--dsw-alias-brand-primary); background: var(--dsw-alias-fill-l1);
-  border: 1px solid var(--dsw-alias-border-l2); font-weight: 600; }
+/* 原生 1017 角标的样式：浅蓝底气泡 + 蓝字 */
+.hn-mtag { font-size: 11px; line-height: 16px; padding: 0 6px; border-radius: 8px; font-weight: 600;
+  color: var(--dsw-alias-brand-primary);
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 14%, var(--dsw-alias-settings-card-fill)); }
 .hn-model-notes { margin: 0; padding-left: 18px; font-size: 11.5px; line-height: 18px;
   color: var(--dsw-alias-label-tertiary); }
 .hn-chip { border: 1px solid var(--dsw-alias-border-l2); border-radius: 6px; padding: 1px 8px;
@@ -566,12 +573,32 @@ window.__ModuleLoader__.load({
       const [username, setUsername] = react.useState('');
       const [password, setPassword] = react.useState('');
       const [touchedName, setTouchedName] = react.useState(false);
+      // 更新检查结果：null = 还没查完
+      const [updateInfo, setUpdateInfo] = react.useState(null);
       const alive = react.useRef(true);
 
       react.useEffect(() => {
         alive.current = true;
         return () => {
           alive.current = false;
+        };
+      }, []);
+
+      // 开机查一次仓库有没有新版本（宿主侧有 10 分钟缓存，不会频繁打网络）
+      react.useEffect(() => {
+        let mounted = true;
+        (async () => {
+          try {
+            const payload = await call('/check-update');
+            if (mounted && payload !== null && payload.ok === true && payload.update !== undefined) {
+              setUpdateInfo(payload.update);
+            }
+          } catch (cause) {
+            if (mounted) setUpdateInfo({ error: String(cause && cause.message ? cause.message : cause) });
+          }
+        })();
+        return () => {
+          mounted = false;
         };
       }, []);
 
@@ -660,6 +687,34 @@ window.__ModuleLoader__.load({
             : '';
       const countOf = (label) => models.filter((id) => sourceOf(id) === label).length;
 
+      // 版本 / 更新提示
+      const currentVersion = status !== null && typeof status.version === 'string' ? status.version : '';
+      const updateBadge = (() => {
+        if (updateInfo === null) return badge('检查更新…', 'off');
+        if (updateInfo.error) {
+          return jsx('a', {
+            className: 'hn-update',
+            key: 'up',
+            href: RELEASES_URL,
+            target: '_blank',
+            rel: 'noreferrer noopener',
+            title: String(updateInfo.error),
+            children: '检查更新失败，手动查看 ↗',
+          });
+        }
+        if (updateInfo.hasUpdate === true) {
+          return jsx('a', {
+            className: 'hn-update',
+            key: 'up',
+            href: String(updateInfo.url || RELEASES_URL),
+            target: '_blank',
+            rel: 'noreferrer noopener',
+            children: '有新版本 ' + String(updateInfo.latest || '') + ' ↗',
+          });
+        }
+        return badge('已是最新', 'ok');
+      })();
+
       const doLogin = () => run('login', () => call('/login', { username, password }));
       const doSave = () => run('save', () => call('/save', { username, password }));
       const doForget = () => run('forget', () => call('/forget', {}));
@@ -710,6 +765,11 @@ window.__ModuleLoader__.load({
             jsx('span', { className: 'hn-k', children: '海师大智汇' }),
             portalStatus.loggedIn === true ? badge('已连接', 'ok') : badge('未连接', 'off'),
             jsx('span', { className: 'hn-v', key: 'v', children: portalStatus.error ? String(portalStatus.error) : '阿里云百炼 · 3 个模型' }),
+          ] }),
+          jsx('div', { className: 'hn-row', key: 'version', children: [
+            jsx('span', { className: 'hn-k', children: '版本' }),
+            jsx('span', { className: 'hn-v mono', key: 'v', children: currentVersion || '—' }),
+            updateBadge,
           ] }),
         ] }),
       ] }));

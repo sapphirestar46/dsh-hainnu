@@ -7,7 +7,15 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import { PortalClient, PortalError, flattenMessages, hashMessages, messageText } from '../lib/portal.js';
 import { PORTAL_MODELS, allModels, isPortalModel, modelById } from '../lib/models.js';
-import { HainnuProxy, buildToolPrompt, looksLikePlan, looksLikePlatformError, parseToolCall, wantsThinking } from '../lib/proxy.js';
+import {
+  HainnuProxy,
+  buildToolPrompt,
+  looksLikePlan,
+  looksLikePlatformError,
+  parseDsmlCalls,
+  parseToolCall,
+  wantsThinking,
+} from '../lib/proxy.js';
 
 let passed = 0;
 function ok(name, fn) {
@@ -191,6 +199,96 @@ ok('代理模型清单合并两个上游', () => {
   passed += 1;
 }
 
+// DSH 原生 DSML 工具调用：模型在 DSH 系统提示下会写这套格式
+{
+  const one = [
+    '<｜DSML｜ calls>',
+    '<｜DSML｜ invoke name="run_code">',
+    '<｜DSML｜ parameter name="description" string="true">写个文件</｜DSML｜ parameter>',
+    '<｜DSML｜ parameter name="code" string="true">const html = "x";</｜DSML｜ parameter>',
+    '</｜DSML｜ invoke>',
+    '</｜DSML｜ calls>',
+  ].join('\n');
+  const calls = parseDsmlCalls(one);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].name, 'run_code');
+  const args = JSON.parse(calls[0].arguments);
+  assert.equal(args.description, '写个文件');
+  assert.equal(args.code, 'const html = "x";');
+
+  // 半角竖线也认
+  const ascii = '<|DSML| invoke name="read">\n<|DSML| parameter name="path" string="true">a.txt</|DSML| parameter>\n</|DSML| invoke>';
+  assert.equal(parseDsmlCalls(ascii)[0].name, 'read');
+  assert.equal(JSON.parse(parseDsmlCalls(ascii)[0].arguments).path, 'a.txt');
+
+  // 非字符串参数按 JSON 解析
+  const num = '<|DSML| invoke name="f">\n<|DSML| parameter name="n" string="false">42</|DSML| parameter>\n</|DSML| invoke>';
+  assert.equal(JSON.parse(parseDsmlCalls(num)[0].arguments).n, 42);
+
+  // 漏了闭标记也能抽（截断场景）
+  const broken = '<|DSML| invoke name="run_code">\n<|DSML| parameter name="code" string="true">console.log(1)';
+  const brokenCalls = parseDsmlCalls(broken);
+  assert.equal(brokenCalls.length, 1);
+  assert.equal(brokenCalls[0].name, 'run_code');
+
+  // parseToolCall 两种协议都能抽
+  assert.equal(parseToolCall(one).name, 'run_code');
+  assert.equal(parseToolCall('<tool_call>{"name":"read","arguments":{}}</tool_call>').name, 'read');
+  assert.equal(parseToolCall('普通回答'), null);
+
+  console.log('  ok  DSML 工具调用解析');
+  passed += 1;
+}
+
+// 端到端：平台模型吐 DSML 文本 → 代理转成标准 tool_calls
+{
+  const fakePortal = {
+    token: async () => 't',
+    describe: async () => ({ applicationId: 'app', platformIds: { 'kimi-k3': 'p' } }),
+    openConversation: async () => 'conv',
+    streamChat: async (options) => {
+      options.onDelta({ content: '<|DSML| invoke name="read">\n<|DSML| parameter name="path" string="true">a.txt</|DSML| parameter>\n</|DSML| invoke>', reasoning: '' });
+      return { content: '', reasoning: '', usage: null, nodeStatus: 'SUCCESS' };
+    },
+  };
+  const proxy = new HainnuProxy({ port: 0, acceptKeys: () => ['k'], getToken: () => '', portal: fakePortal });
+  proxy.modelCache.ids = ['deepseek-flash'];
+  const port = 18000 + Math.floor(Math.random() * 1500);
+  proxy.config.port = port;
+  await proxy.listen(port);
+  const res = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
+    method: 'POST',
+    headers: { authorization: 'Bearer k', 'content-type': 'application/json', connection: 'close' },
+    body: JSON.stringify({
+      model: 'kimi-k3', stream: true,
+      tools: [{ name: 'read', description: '读文件', parameters: { type: 'object', properties: { path: { type: 'string' } } } }],
+      messages: [{ role: 'user', content: '读一下 a.txt' }],
+    }),
+  });
+  const text = await res.text();
+  let calls = [];
+  let finish = null;
+  for (const raw of text.split('\n\n').filter((f) => f.startsWith('data: ')).map((f) => f.slice(6))) {
+    if (raw === '[DONE]') continue;
+    let f; try { f = JSON.parse(raw); } catch { continue; }
+    const c = f.choices && f.choices[0];
+    if (!c) continue;
+    if (c.delta && Array.isArray(c.delta.tool_calls)) calls = calls.concat(c.delta.tool_calls);
+    if (c.finish_reason) finish = c.finish_reason;
+  }
+  // 关掉 keep-alive 连接，否则 server.close 会一直等
+  const server = proxy.server;
+  if (server !== null && typeof server.closeAllConnections === 'function') server.closeAllConnections();
+  await proxy.stop().catch(() => {});
+  assert.equal(finish, 'tool_calls', 'DSML 没被转成 tool_calls');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].function.name, 'read');
+  assert.equal(JSON.parse(calls[0].function.arguments).path, 'a.txt');
+
+  console.log('  ok  端到端：DSML → tool_calls');
+  passed += 1;
+}
+
 /* --------------------------------------------------- 桩服务：目录与鉴权 */
 
 function startStub(handler) {
@@ -266,3 +364,5 @@ try {
 }
 
 console.log(`\n${passed}/${passed} 通过`);
+// 端到端用例里起过监听端口，跑完直接退出，别让 keep-alive 把进程吊住
+process.exit(0);

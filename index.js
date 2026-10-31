@@ -21,6 +21,7 @@ import {
   DEFAULTS as PROVIDER_DEFAULTS,
 } from './lib/modelconfig.js';
 import { HainnuProxy } from './lib/proxy.js';
+import { openRequest, readAll } from './lib/http.js';
 import { LOCAL_MODEL, PORTAL_MODELS, allModels } from './lib/models.js';
 import { PortalClient, portalLogin } from './lib/portal.js';
 import { normalizeUsage, recordUsage, summarizeUsage } from './lib/usage.js';
@@ -32,7 +33,55 @@ export const name = 'dsh-hainnu';
 export const inject = ['webServer'];
 
 const ROUTE_PREFIX = '/dsh-hainnu';
-const VERSION = '0.1.0';
+const VERSION = '0.2.0';
+const REPO = 'sapphirestar46/dsh-hainnu';
+const REPO_RELEASES = `https://github.com/${REPO}/releases`;
+const REPO_LATEST_API = `https://api.github.com/repos/${REPO}/releases/latest`;
+/**
+ * 更新检查的数据源。国内直连 api.github.com 经常超时，所以按顺序回退：
+ *   1. GitHub API（最准，能拿到 release 说明）
+ *   2. jsDelivr CDN 读仓库里的 package.json（国内一般可达，不带 GitHub API 限流）
+ *   3. fastly 镜像的 jsDelivr
+ * 三个都失败就明确报错，面板给一个 Releases 链接让用户手动看。
+ */
+const UPDATE_SOURCES = [
+  {
+    name: 'github',
+    url: REPO_LATEST_API,
+    timeoutMs: 5000,
+    parse: (json) => ({
+      latest: String(json.tag_name || '').replace(/^v/i, ''),
+      url: String(json.html_url || REPO_RELEASES),
+      name: String(json.name || ''),
+      publishedAt: String(json.published_at || ''),
+    }),
+  },
+  {
+    name: 'jsdelivr',
+    url: `https://cdn.jsdelivr.net/gh/${REPO}@main/package.json`,
+    timeoutMs: 6000,
+    parse: (json) => ({ latest: String(json.version || ''), url: REPO_RELEASES, name: '', publishedAt: '' }),
+  },
+  {
+    name: 'jsdelivr-fastly',
+    url: `https://fastly.jsdelivr.net/gh/${REPO}@main/package.json`,
+    timeoutMs: 6000,
+    parse: (json) => ({ latest: String(json.version || ''), url: REPO_RELEASES, name: '', publishedAt: '' }),
+  },
+];
+
+/** 比较两个版本号（只比 major.minor.patch），返回 1 / 0 / -1。 */
+function compareVersion(left, right) {
+  const parts = (value) => String(value || '').replace(/^v/i, '').split('.').slice(0, 3).map((piece) => Number(String(piece).replace(/[^0-9].*$/, '')) || 0);
+  const a = parts(left);
+  const b = parts(right);
+  for (let i = 0; i < 3; i += 1) {
+    const x = a[i] || 0;
+    const y = b[i] || 0;
+    if (x !== y) return x > y ? 1 : -1;
+  }
+  return 0;
+}
 
 const DEFAULTS = {
   host: '127.0.0.1',
@@ -415,6 +464,65 @@ export function apply(ctx, config) {
     return result;
   };
 
+  /** 检查 GitHub 上有没有新版本；10 分钟内复用结果，请求失败也缓存，避免面板反复打网络。 */
+  let updateState = { at: 0, value: null };
+  const checkUpdate = async (force = false) => {
+    const now = Date.now();
+    if (!force && updateState.value !== null && now - updateState.at < 10 * 60 * 1000) return updateState.value;
+    const base = {
+      current: VERSION,
+      latest: '',
+      tag: '',
+      hasUpdate: false,
+      url: REPO_RELEASES,
+      name: '',
+      publishedAt: '',
+      checkedAt: now,
+      error: '',
+    };
+    const failures = [];
+    for (const source of UPDATE_SOURCES) {
+      try {
+        const { res } = await openRequest(source.url, {
+          method: 'GET',
+          verifySsl: true,
+          timeoutMs: source.timeoutMs,
+          headers: { accept: 'application/json', 'user-agent': `dsh-hainnu/${VERSION}` },
+        });
+        const text = await readAll(res, 256 * 1024);
+        if (res.statusCode !== 200) {
+          failures.push(`${source.name}: HTTP ${res.statusCode}`);
+          continue;
+        }
+        const json = JSON.parse(text);
+        const parsed = source.parse(json);
+        const latest = String(parsed.latest || '').replace(/^v/i, '');
+        if (latest === '') {
+          failures.push(`${source.name}: 没解析出版本号`);
+          continue;
+        }
+        const value = {
+          ...base,
+          latest,
+          tag: `v${latest}`,
+          hasUpdate: compareVersion(latest, VERSION) > 0,
+          url: parsed.url || REPO_RELEASES,
+          name: parsed.name || '',
+          publishedAt: parsed.publishedAt || '',
+          source: source.name,
+          failures,
+        };
+        updateState = { at: now, value };
+        return value;
+      } catch (error) {
+        failures.push(`${source.name}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    // 全部源都失败：把失败原因带上，面板据此提示「手动去 Releases 看」
+    const value = { ...base, source: '', failures, error: failures.join('; ') || '所有更新源都不可达' };
+    updateState = { at: now, value };
+    return value;
+  };
   const statusPayload = () => ({
     ok: true,
     version: VERSION,
@@ -512,6 +620,12 @@ export function apply(ctx, config) {
     try {
       if (route === '/status' && method === 'GET') {
         sendJson(res, 200, statusPayload());
+        return;
+      }
+
+      if (route === '/check-update' && method === 'GET') {
+        const update = await checkUpdate(url.searchParams.get('force') === '1');
+        sendJson(res, 200, { ok: true, update });
         return;
       }
 

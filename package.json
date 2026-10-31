@@ -1,8 +1,8 @@
 {
   "name": "dsh-hainnu",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "登录海南师范大学统一身份认证，本地启动海师模型代理，并把 deepseek-flash 接入 DSH。",
+  "description": "登录海南师范大学统一身份认证，把海师自部署模型与「海师大智汇」的三个阿里云模型接成 DSH provider。",
   "type": "module",
   "main": "index.js",
   "exports": {
