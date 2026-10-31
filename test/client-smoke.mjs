@@ -182,7 +182,8 @@ check('热力图：固定窗口、无横向滚动、绿色刻度', () => {
   assert.match(css, /\.hn-heat \{[^}]*justify-content: end/);
   // 热度用绿色，不是品牌蓝/灰度
   for (const level of ['l1', 'l2', 'l3', 'l4']) {
-    const rule = new RegExp('\\.hn-cell\\.' + level + ' \\{([^}]*)\\}');
+    // 小格与每周柱子共用同一档：.hn-cell.lN, .hn-bar.lN { ... }
+    const rule = new RegExp('\\.hn-cell\\.' + level + '[^{]*\\{([^}]*)\\}');
     const match = css.match(rule);
     assert.ok(match !== null, '缺少 ' + level + ' 规则');
     assert.match(match[1], /state-success-primary/, level + ' 不是绿色');

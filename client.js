@@ -153,11 +153,21 @@ window.__ModuleLoader__.load({
 .hn-heat { display: grid; grid-auto-flow: column; gap: 3px; justify-content: end;
   grid-template-columns: repeat(var(--cols, 26), 10px); grid-template-rows: repeat(7, 10px); }
 .hn-cell { width: 10px; height: 10px; border-radius: 2px; background: var(--dsw-alias-fill-l1); }
-/* 用量热度用绿色：越忙越深 */
-.hn-cell.l1 { background: var(--dsw-alias-state-success-primary); opacity: .22; }
-.hn-cell.l2 { background: var(--dsw-alias-state-success-primary); opacity: .45; }
-.hn-cell.l3 { background: var(--dsw-alias-state-success-primary); opacity: .70; }
-.hn-cell.l4 { background: var(--dsw-alias-state-success-primary); opacity: 1; }
+/* 用量热度用绿色：越忙越深（热力图小格与每周柱状图共用同一套档位） */
+.hn-cell.l1, .hn-bar.l1 { background: var(--dsw-alias-state-success-primary); opacity: .22; }
+.hn-cell.l2, .hn-bar.l2 { background: var(--dsw-alias-state-success-primary); opacity: .45; }
+.hn-cell.l3, .hn-bar.l3 { background: var(--dsw-alias-state-success-primary); opacity: .70; }
+.hn-cell.l4, .hn-bar.l4 { background: var(--dsw-alias-state-success-primary); opacity: 1; }
+/* 「每周」视图：一周一根柱子，从下往上长 */
+.hn-bars { display: grid; grid-auto-flow: column; gap: 3px; justify-content: end;
+  grid-template-columns: repeat(var(--cols, 26), 10px); align-items: end; height: 52px; }
+.hn-bar-slot { display: flex; align-items: flex-end; height: 100%; }
+.hn-bar { width: 100%; border-radius: 2px; background: var(--dsw-alias-fill-l1); }
+/* 自绘 tooltip：立即显示，不受原生 title 的一秒多延迟影响 */
+.hn-tip { position: fixed; z-index: 20; pointer-events: none; transform: translate(-50%, -140%);
+  padding: 3px 8px; border-radius: 6px; font-size: 11.5px; line-height: 16px; white-space: nowrap;
+  color: var(--dsw-alias-label-primary); background: var(--dsw-alias-settings-card-fill);
+  border: 1px solid var(--dsw-alias-border-l2); box-shadow: var(--dsw-elevation-panel); }
 .hn-heat-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px;
   margin-top: 8px; font-size: 11px; color: var(--dsw-alias-label-tertiary); }
 .hn-axis { display: grid; gap: 3px; margin-top: 6px; justify-content: end;
@@ -346,6 +356,9 @@ window.__ModuleLoader__.load({
         : null;
       const [mode, setMode] = react.useState('day');
       const [width, setWidth] = react.useState(0);
+      // 自己画 tooltip：原生 title 要等 1 秒多，而且面板每 5 秒重渲染会把计时器重置掉，
+      // 于是鼠标放上去经常要卡好几秒才显示。
+      const [hover, setHover] = react.useState(null);
       const wrapRef = react.useRef(null);
 
       // 量一次可用宽度：列数由宽度决定，因此不会出现横向滚动条。
@@ -390,15 +403,45 @@ window.__ModuleLoader__.load({
       const windowValues = days.map((day) => byDate.get(dayKey(day)) || 0);
       const levels = heatLevels(windowValues);
 
+      const hoverProps = (text) => ({
+        onMouseEnter: (event) => setHover({ text, x: event.clientX, y: event.clientY }),
+        onMouseMove: (event) => setHover({ text, x: event.clientX, y: event.clientY }),
+        onMouseLeave: () => setHover(null),
+      });
+      const fmtMd = (day) => day.getMonth() + 1 + '/' + day.getDate();
       const cells = days.map((day, index) => jsx('div', {
         className: 'hn-cell' + (levels[index] > 0 ? ' l' + levels[index] : ''),
         key: 'c-' + dayKey(day),
-        title: dayKey(day) + '：' + fmtTokens(windowValues[index]),
+        ...hoverProps(dayKey(day) + '：' + fmtTokens(windowValues[index])),
       }));
       // 最后一列不足 7 天时补隐形格子，保证每列都是周日→周六
       for (let i = endWeekday + 1; i < 7; i += 1) {
         cells.push(jsx('div', { className: 'hn-cell', key: 'pad-' + i, style: { visibility: 'hidden' } }));
       }
+
+      // 「每周」换成按周汇总的柱状图：一周一根，数量比「每天」少得多，
+      // 也不会再出现「一个忙碌日把整周 7 个格子都点亮」的误解。
+      const dailyByDate = new Map();
+      for (let i = 0; i < series.length; i += 1) {
+        const key = String(series[i].date === undefined ? '' : series[i].date).slice(0, 10);
+        if (key !== '') dailyByDate.set(key, Number(series[i].tokens) || 0);
+      }
+      const weeks = [];
+      for (let col = 0; col < cols; col += 1) {
+        let total = 0;
+        let first = null;
+        let last = null;
+        for (let i = 0; i < 7; i += 1) {
+          const day = days[col * 7 + i];
+          if (day === undefined) continue;
+          total += dailyByDate.get(dayKey(day)) || 0;
+          if (first === null) first = day;
+          last = day;
+        }
+        weeks.push({ total, first, last });
+      }
+      const weekMax = weeks.reduce((top, week) => (week.total > top ? week.total : top), 0);
+      const weekLevels = heatLevels(weeks.map((week) => week.total));
 
       const stats = [
         ['累计 Token 数', fmtTokens(usage !== null ? usage.totalTokens : 0)],
@@ -408,7 +451,11 @@ window.__ModuleLoader__.load({
         ['当前连续天数', (Number(usage !== null ? usage.currentStreak : 0) || 0) + ' 天'],
       ];
       const tabs = [['day', '每天'], ['week', '每周'], ['total', '累计总量']];
-      const rangeText = series.length > 0 ? `近 ${totalDays} 天（截至 ${end.getMonth() + 1}/${end.getDate()}）` : '';
+      const rangeText = series.length === 0
+        ? ''
+        : mode === 'week'
+          ? `${cols} 周（截至 ${fmtMd(end)}）`
+          : `近 ${totalDays} 天（截至 ${fmtMd(end)}）`;
 
       // 底部月份刻度：只在「月份变了」的那一列打标。
       // 开头那个不完整的月份不标，避免出现「5 月 7 月」这种跳月。
@@ -448,7 +495,11 @@ window.__ModuleLoader__.load({
                 className: 'hn-tab' + (mode === pair[0] ? ' on' : ''),
                 key: pair[0],
                 type: 'button',
-                onClick: () => setMode(pair[0]),
+                onClick: () => {
+                  // 切视图时先收起 tooltip，否则旧位置会留一个「幽灵」提示
+                  setHover(null);
+                  setMode(pair[0]);
+                },
                 children: pair[1],
               })),
             }),
@@ -459,7 +510,21 @@ window.__ModuleLoader__.load({
             ref: wrapRef,
             style: { '--cols': cols },
             children: [
-              jsx('div', { className: 'hn-heat', key: 'g', children: cells }),
+              mode === 'week'
+                ? jsx('div', {
+                    className: 'hn-bars',
+                    key: 'g',
+                    children: weeks.map((week, col) => jsx('div', {
+                      className: 'hn-bar-slot',
+                      key: 'w-' + col,
+                      ...hoverProps(fmtMd(week.first) + '–' + fmtMd(week.last) + '：' + fmtTokens(week.total)),
+                      children: jsx('div', {
+                        className: 'hn-bar' + (weekLevels[col] > 0 ? ' l' + weekLevels[col] : ''),
+                        style: { height: (week.total <= 0 ? 2 : Math.max(3, Math.round((week.total / (weekMax || 1)) * 46))) + 'px' },
+                      }),
+                    })),
+                  })
+                : jsx('div', { className: 'hn-heat', key: 'g', children: cells }),
               jsx('div', { className: 'hn-axis', key: 'a', children: axis }),
             ],
           }),
@@ -476,6 +541,13 @@ window.__ModuleLoader__.load({
             ] }),
           ] }),
         ] }),
+        // 自绘 tooltip（fixed 定位，不会被热力图的 overflow:hidden 裁掉）
+        hover === null ? null : jsx('div', {
+          className: 'hn-tip',
+          key: 'tip',
+          style: { left: hover.x + 'px', top: hover.y + 'px' },
+          children: hover.text,
+        }),
       ] });
     }
 
