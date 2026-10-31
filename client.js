@@ -117,6 +117,7 @@ window.__ModuleLoader__.load({
 .hn-tag.warn { color: var(--dsw-alias-state-warn-primary); border-color: currentColor; }
 .hn-tag.off { color: var(--dsw-alias-label-tertiary); }
 .hn-tag.hi { color: var(--dsw-alias-brand-primary); border-color: currentColor; }
+.hn-tag.build { color: var(--dsw-alias-label-primary); border-color: currentColor; font-weight: 600; }
 .hn-model-notes { margin: 0; padding-left: 18px; font-size: 11.5px; line-height: 18px;
   color: var(--dsw-alias-label-tertiary); }
 .hn-chip { border: 1px solid var(--dsw-alias-border-l2); border-radius: 6px; padding: 1px 8px;
@@ -715,7 +716,15 @@ window.__ModuleLoader__.load({
           jsx('h3', { children: '可用模型', key: 't' }),
           jsx('div', { className: 'hn-catalog', key: 'l', children: catalog.map((item) => jsx('div', { className: 'hn-model', key: String(item.id || item.name), children: [
             jsx('div', { className: 'hn-model-head', key: 'h', children: [
-              jsx('span', { className: 'hn-model-name', key: 'n', children: String(item.name || item.id || '') }),
+              // 名字里已经带了发行号时，把它摘出来做成徽标（和 DSH 官方的挂法一致）
+              jsx('span', {
+                className: 'hn-model-name',
+                key: 'n',
+                children: item.build
+                  ? String(item.name || item.id || '').replace(new RegExp('\\s+' + String(item.build) + '(?=\\s|$)'), '')
+                  : String(item.name || item.id || ''),
+              }),
+              item.build ? jsx('span', { className: 'hn-tag build', key: 'b', children: String(item.build) }) : null,
               item.source ? jsx('span', { className: 'hn-tag' + (String(item.source).includes('自部署') ? ' hi' : ''), key: 's', children: String(item.source) }) : null,
             ] }),
             jsx('div', { className: 'hn-model-meta', key: 'm', children: [

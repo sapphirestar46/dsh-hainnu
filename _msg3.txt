@@ -1,0 +1,15 @@
+给自部署模型加 1017 发行标（对齐 DSH 官方徽标）
+
+DSH 新版用内置插件 dsh-client-ui-deepseek-model-label-1017 给官方 DeepSeek Flash
+挂「1017」发行标，但那个插件只认官方 provider，我们的 hainnu 不在范围内。
+
+做法：
+- lib/models.js：自部署模型的显示名带上 1017（学校上游就是 V4.1-Flash-1017 构建），
+  新增 build: '1017' 字段
+- index.js：status.models 带上 build；legacyNames 增加上一版名字，
+  已装用户的 cordis.patch.yml 里的 name 会自动迁到新名字（实测幂等）
+- client.js：模型名里如果已经带发行号，就把它摘出来渲染成徽标，
+  和 DSH 官方的挂法一致（DeepSeek V4.1 Flash (海师自部署) [1017]）
+- 测试：portal-smoke 断言 build === '1017'，client-smoke 断言徽标渲染，全套 90 项通过
+
+阿里云那个 deepseek-v4.1-flash 没加：百炼上的构建号未知，不冒充 1017。

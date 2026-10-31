@@ -376,7 +376,8 @@ export function apply(ctx, config) {
       apiKey: settings.localApiKey,
       modelId: settings.modelId,
       modelName: LOCAL_MODEL.name,
-      legacyNames: ['DeepSeek V4.1 Flash (海师)'],
+      // 显示名迁移：旧名字（含上一版「(海师自部署)」）都会被换成带 1017 的新名字。
+      legacyNames: ['DeepSeek V4.1 Flash (海师)', 'DeepSeek V4.1 Flash (海师自部署)'],
       // 同一 provider 下的三个平台模型：海师大智汇 / 阿里云百炼。
       extraModels:
         portal === null
@@ -432,6 +433,7 @@ export function apply(ctx, config) {
       id: model.id,
       name: model.name,
       source: model.source,
+      build: model.build === undefined ? '' : model.build,
       contextWindow: model.contextWindow,
       maxTokens: model.maxTokens,
       requestLimitBytes: model.requestLimitBytes === undefined ? null : model.requestLimitBytes,
