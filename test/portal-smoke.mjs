@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import { PortalClient, PortalError, flattenMessages, hashMessages, messageText } from '../lib/portal.js';
 import { PORTAL_MODELS, allModels, isPortalModel, modelById } from '../lib/models.js';
-import { HainnuProxy } from '../lib/proxy.js';
+import { HainnuProxy, buildToolPrompt, looksLikePlatformError, parseToolCall, wantsThinking } from '../lib/proxy.js';
 
 let passed = 0;
 function ok(name, fn) {
@@ -99,6 +99,63 @@ ok('代理模型清单合并两个上游', () => {
   assert.match(retry.prompt, /直接给出最终答复/);
 
   console.log('  ok  空回复重试：fresh 换新会话并追加「直接给结论」提示');
+  passed += 1;
+}
+
+// 思考开关与平台异常正文的判定
+{
+  assert.equal(wantsThinking({ reasoning_effort: 'none' }), false);
+  assert.equal(wantsThinking({ reasoning_effort: 'max' }), true);
+  assert.equal(wantsThinking({ thinking: { type: 'disabled' } }), false);
+  assert.equal(wantsThinking({ enable_thinking: false }), false);
+  assert.equal(wantsThinking({}), undefined);
+  assert.equal(wantsThinking(null), undefined);
+  assert.equal(wantsThinking({ reasoning: { effort: 'low' } }), true);
+
+  assert.equal(looksLikePlatformError('Exception:Error code'), true);
+  assert.equal(looksLikePlatformError('  Error code: 400  '), true);
+  assert.equal(looksLikePlatformError('收到'), false);
+  assert.equal(looksLikePlatformError(''), false);
+
+  console.log('  ok  思考开关判定 / 平台异常正文识别');
+  passed += 1;
+}
+
+// 工具协议：提示词生成 + 解析
+{
+  const prompt = buildToolPrompt([
+    { type: 'function', function: { name: 'read', description: '读文件', parameters: { type: 'object', properties: { path: { type: 'string' } } } } },
+  ]);
+  assert.match(prompt, /- read：读文件/);
+  assert.match(prompt, /<tool_call>/);
+  assert.equal(buildToolPrompt([]), '');
+  assert.equal(buildToolPrompt([{ type: 'text' }]), '');
+
+  assert.deepEqual(parseToolCall('<tool_call>{"name":"read","arguments":{"path":"a"}}</tool_call>'), {
+    name: 'read',
+    arguments: '{"path":"a"}',
+  });
+  // arguments 是字符串时再解一层
+  assert.deepEqual(parseToolCall('<tool_call>{"name":"x","arguments":"{\\"a\\":1}"}</tool_call>').arguments, '{"a":1}');
+  assert.equal(parseToolCall('普通回答，没有调用'), null);
+  assert.equal(parseToolCall('<tool_call>not json</tool_call>'), null);
+  assert.equal(parseToolCall('<tool_call>{"arguments":{}}</tool_call>'), null);
+
+  console.log('  ok  工具提示词与 tool_call 解析');
+  passed += 1;
+}
+
+// 工具结果拍平：不要伪装成用户发言
+{
+  const text = flattenMessages([
+    { role: 'user', content: '读一下' },
+    { role: 'assistant', content: '', tool_calls: [{ id: 'c1', type: 'function', function: { name: 'read', arguments: '{"path":"a"}' } }] },
+    { role: 'tool', tool_call_id: 'c1', content: '文件内容' },
+  ]);
+  assert.match(text, /助手：\[调用工具 read\(\{"path":"a"\}\)\]/);
+  assert.match(text, /工具结果：文件内容/);
+
+  console.log('  ok  工具结果拍平');
   passed += 1;
 }
 

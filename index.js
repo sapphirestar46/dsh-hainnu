@@ -387,6 +387,7 @@ export function apply(ctx, config) {
               contextWindow: model.contextWindow,
               maxTokens: model.maxTokens,
               input: model.input,
+              reasoningEfforts: model.reasoningEfforts,
             })),
       baseURL: proxy.baseURL,
       contextWindow: settings.contextWindow,
