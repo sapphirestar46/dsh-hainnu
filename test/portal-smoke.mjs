@@ -76,6 +76,32 @@ ok('代理模型清单合并两个上游', () => {
   assert.deepEqual(localOnly.mergedModelIds(), ['deepseek-flash']);
 });
 
+// 异步用例：ok() 是同步计数，这里单独走 await 再计分。
+{
+  const opened = [];
+  const fakePortal = {
+    token: async () => 'tok',
+    describe: async () => ({ applicationId: 'app-1', platformIds: { 'kimi-k3': 'p-kimi' } }),
+    openConversation: async (appId) => {
+      opened.push(appId);
+      return 'conv-' + opened.length;
+    },
+  };
+  const proxy = new HainnuProxy({ portal: fakePortal });
+  const messages = [{ role: 'user', content: '你好' }];
+
+  const first = await proxy.preparePortalTurn({ id: 'kimi-k3', maxTokens: 8192 }, messages, false);
+  assert.equal(first.conversationId, 'conv-1');
+  assert.equal(first.prompt.includes('直接给出最终答复'), false);
+
+  const retry = await proxy.preparePortalTurn({ id: 'kimi-k3', maxTokens: 8192 }, messages, false, { fresh: true, nudge: true });
+  assert.equal(retry.conversationId, 'conv-2');
+  assert.match(retry.prompt, /直接给出最终答复/);
+
+  console.log('  ok  空回复重试：fresh 换新会话并追加「直接给结论」提示');
+  passed += 1;
+}
+
 /* --------------------------------------------------- 桩服务：目录与鉴权 */
 
 function startStub(handler) {
