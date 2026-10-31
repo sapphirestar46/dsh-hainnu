@@ -380,7 +380,8 @@ export function apply(ctx, config) {
       legacyNames: [
         'DeepSeek V4.1 Flash (海师)',
         'DeepSeek V4.1 Flash (海师自部署)',
-        'DeepSeek V4.1 Flash (海师阿里云)',
+        // 下面这条是上一版误加的：如果已经被写进配置，这里负责改回来
+        'DeepSeek V4.1 Flash 1017 (海师阿里云)',
       ],
       // 同一 provider 下的三个平台模型：海师大智汇 / 阿里云百炼。
       extraModels:
