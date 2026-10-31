@@ -38,6 +38,6 @@
     }
   },
   "scripts": {
-    "test": "node test/guard-smoke.mjs && node test/proxy-smoke.mjs && node test/login-smoke.mjs && node test/client-smoke.mjs && node test/store-smoke.mjs && node test/modelconfig-smoke.mjs && node test/usage-smoke.mjs"
+    "test": "node test/guard-smoke.mjs && node test/proxy-smoke.mjs && node test/login-smoke.mjs && node test/client-smoke.mjs && node test/store-smoke.mjs && node test/modelconfig-smoke.mjs && node test/usage-smoke.mjs && node test/portal-smoke.mjs"
   }
 }

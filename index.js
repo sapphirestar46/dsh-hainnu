@@ -21,6 +21,8 @@ import {
   DEFAULTS as PROVIDER_DEFAULTS,
 } from './lib/modelconfig.js';
 import { HainnuProxy } from './lib/proxy.js';
+import { LOCAL_MODEL, PORTAL_MODELS } from './lib/models.js';
+import { PortalClient, portalLogin } from './lib/portal.js';
 import { normalizeUsage, recordUsage, summarizeUsage } from './lib/usage.js';
 import { login as loginFlow, LoginError, fetchProfile } from './lib/login.js';
 import { jwtExpiry, loadState, publicState, readPassword, readToken, saveState, seal, unseal } from './lib/store.js';
@@ -55,6 +57,9 @@ const DEFAULTS = {
   syncModelPolicy: false,
   syncCompaction: true,
   setDefaultModel: true,
+  // 海师大智汇：同一套学号密码，另一条 OAuth2 链路，多带三个阿里云百炼模型。
+  portalEnabled: true,
+  portalOrigin: 'https://hsaixy.hainnu.edu.cn:9443',
 };
 
 /** 自动登录的失败预算：学校连续 5 次密码错误会锁账号，这里留足余量。 */
@@ -84,6 +89,8 @@ function normalizeConfig(config) {
     syncModelPolicy: pick('syncModelPolicy', DEFAULTS.syncModelPolicy) === true,
     syncCompaction: pick('syncCompaction', DEFAULTS.syncCompaction) !== false,
     setDefaultModel: pick('setDefaultModel', DEFAULTS.setDefaultModel) !== false,
+    portalEnabled: pick('portalEnabled', DEFAULTS.portalEnabled) !== false,
+    portalOrigin: String(pick('portalOrigin', DEFAULTS.portalOrigin)).replace(/\/+$/, ''),
     aliases: raw.aliases !== null && typeof raw.aliases === 'object' ? raw.aliases : {},
   };
 }
@@ -200,6 +207,54 @@ export function apply(ctx, config) {
     return keyCache.keys;
   };
 
+  // ---- 海师大智汇（hsaixy）令牌 ----
+  // 和主登录共用同一套学号密码，但走另一条 OAuth2 链路。令牌存在 state 里，
+  // 失效由 401 驱动重登；登录本身受与主登录相同的失败预算约束。
+  let portalLoginPromise = null;
+  const portalGetToken = async (force = false) => {
+    const cached = state.portalToken ? unseal(String(state.portalToken)) : '';
+    if (!force && cached !== '') return cached;
+    if (portalLoginPromise !== null) return portalLoginPromise;
+    const password = readPassword(state);
+    if (password === '' || state.username === '') return cached;
+    const failCount = Number(state.failCount) || 0;
+    const failAt = Number(state.failAt) || 0;
+    if (failCount >= MAX_AUTO_FAILURES && Date.now() - failAt < FAILURE_WINDOW_MS) return cached;
+    portalLoginPromise = (async () => {
+      try {
+        const token = await portalLogin({
+          username: state.username,
+          password,
+          origin: settings.portalOrigin,
+          verifySsl: settings.verifySsl,
+        });
+        state.portalToken = seal(token);
+        state.portalTokenAt = Date.now();
+        state.portalError = '';
+        persist();
+        log('info', `${name}: 海师大智汇已登录`);
+        return token;
+      } catch (error) {
+        state.portalError = error instanceof Error ? error.message : String(error);
+        persist();
+        log('warn', `${name}: 海师大智汇登录失败: ${state.portalError}`);
+        return cached;
+      } finally {
+        portalLoginPromise = null;
+      }
+    })();
+    return portalLoginPromise;
+  };
+
+  const portal =
+    settings.portalEnabled === false
+      ? null
+      : new PortalClient({
+          origin: settings.portalOrigin,
+          verifySsl: settings.verifySsl,
+          getToken: portalGetToken,
+        });
+
   const proxy = new HainnuProxy({
     host: settings.host,
     port: settings.port,
@@ -217,6 +272,7 @@ export function apply(ctx, config) {
       return readToken(state);
     },
     relogin: () => autoLogin('proxy-401'),
+    portal,
   });
 
   /** 真正的登录动作（含密码校验、落盘、刷新模型）。 */
@@ -252,7 +308,7 @@ export function apply(ctx, config) {
     persist();
 
     await proxy.refreshModels(true).catch(() => {});
-    const ids = proxy.modelCache.ids;
+    const ids = proxy.mergedModelIds();
     if (Array.isArray(ids) && ids.length > 0) {
       state.models = ids;
       persist();
@@ -319,6 +375,19 @@ export function apply(ctx, config) {
       apiKeyEnv: settings.apiKeyEnv,
       apiKey: settings.localApiKey,
       modelId: settings.modelId,
+      modelName: LOCAL_MODEL.name,
+      legacyNames: ['DeepSeek V4.1 Flash (海师)'],
+      // 同一 provider 下的三个平台模型：海师大智汇 / 阿里云百炼。
+      extraModels:
+        portal === null
+          ? []
+          : PORTAL_MODELS.map((model) => ({
+              id: model.id,
+              name: model.name,
+              contextWindow: model.contextWindow,
+              maxTokens: model.maxTokens,
+              input: model.input,
+            })),
       baseURL: proxy.baseURL,
       contextWindow: settings.contextWindow,
       maxTokens: settings.maxTokens,
@@ -345,6 +414,18 @@ export function apply(ctx, config) {
     endpoint: { baseURL: proxy.baseURL, apiKey: settings.localApiKey, providerId: settings.providerId, modelId: settings.modelId },
     state: publicState(state),
     proxy: proxy.status(),
+    // 海师大智汇：三个阿里云百炼模型，面板上要单独标出来源。
+    portal:
+      portal === null
+        ? null
+        : {
+            enabled: true,
+            origin: settings.portalOrigin,
+            loggedIn: Boolean(state.portalToken),
+            tokenAt: Number(state.portalTokenAt) || 0,
+            error: String(state.portalError || ''),
+            models: PORTAL_MODELS.map((model) => ({ id: model.id, name: model.name, contextWindow: model.contextWindow })),
+          },
     // 经过本插件代理的用量（面板统计条与热力图用）。
     usage: summarizeUsage(state.usage),
     settings: {

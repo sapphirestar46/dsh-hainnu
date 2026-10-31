@@ -28,3 +28,5 @@ jobs:
           node test/client-smoke.mjs
           node test/store-smoke.mjs
           node test/modelconfig-smoke.mjs
+          node test/usage-smoke.mjs
+          node test/portal-smoke.mjs

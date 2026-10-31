@@ -58,13 +58,13 @@ const LLM_ENTRY = `- id: llm-pi-ai
   config:
     providers:
       hainnu:
-        displayName: DeepSeek V4.1 Flash (海师)
+        displayName: 海南师范大学
         apiKeyEnv: HAINNU_API_KEY
         api: openai-completions
         baseURL: http://127.0.0.1:8787/v1
         models:
           - id: deepseek-flash
-            name: DeepSeek V4.1 Flash (海师)
+            name: DeepSeek V4.1 Flash (海师自部署)
             contextWindow: 300000
             maxTokens: 80000
             input:
@@ -149,6 +149,36 @@ check('已有 0 全局余量：不写按模型覆盖', () => {
   assert.equal(text(file), before);
   assert.doesNotMatch(text(file), /modelPolicies/);
   assert.equal(readModelPolicy({ patchPath: file }).effectiveCompactionLine, 220000);
+});
+
+check('旧显示名会迁移到新标注', () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'hainnu-migrate-'));
+  try {
+    const file = path.join(dir, 'cordis.patch.yml');
+    writeFileSync(
+      file,
+      LLM_ENTRY
+        .replace('displayName: 海南师范大学', 'displayName: DeepSeek V4.1 Flash (海师)')
+        .replace('name: DeepSeek V4.1 Flash (海师自部署)', 'name: DeepSeek V4.1 Flash (海师)'),
+      'utf8',
+    );
+    const result = ensureModelConfig({
+      patchPath: file,
+      providerId: 'hainnu',
+      modelId: 'deepseek-flash',
+      modelName: 'DeepSeek V4.1 Flash (海师自部署)',
+      legacyNames: ['DeepSeek V4.1 Flash (海师)'],
+      baseURL: 'http://127.0.0.1:8787/v1',
+      contextWindow: 300000,
+      maxTokens: 80000,
+    });
+    const text = readFileSync(file, 'utf8');
+    assert.match(text, /displayName: 海南师范大学/);
+    assert.match(text, /name: DeepSeek V4.1 Flash \(海师自部署\)/);
+    assert.equal(result.changed, true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 check('contextWindow 不匹配：默认只提示，syncModelPolicy 才校正', () => {

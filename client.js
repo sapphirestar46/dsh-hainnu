@@ -96,6 +96,7 @@ window.__ModuleLoader__.load({
   color: var(--dsw-alias-state-success-primary); }
 .hn-alert.info { border-color: var(--dsw-alias-border-l2); color: var(--dsw-alias-label-secondary); }
 .hn-models { display: flex; flex-wrap: wrap; gap: 6px; }
+    .hn-src { opacity: .6; font-size: 11px; }
 .hn-chip { border: 1px solid var(--dsw-alias-border-l2); border-radius: 6px; padding: 1px 8px;
   font-size: 12px; background: var(--dsw-alias-fill-l1);
   font-family: var(--dsh-font-family-code); color: var(--dsw-alias-label-secondary); }
@@ -496,6 +497,12 @@ window.__ModuleLoader__.load({
         ? proxy.models
         : Array.isArray(state.models) ? state.models : [];
       const activeModel = String(endpoint.modelId || '');
+      const portalStatus = status !== null && status.portal !== null && status.portal !== undefined ? status.portal : null;
+      const sourceOf = (id) =>
+        id === 'deepseek-flash' ? '海师自部署'
+          : id === 'kimi-k3' || id === 'qwen3.8-flash' || id === 'deepseek-v4.1-flash' ? '海师阿里云'
+            : '';
+      const countOf = (label) => models.filter((id) => sourceOf(id) === label).length;
 
       const doLogin = () => run('login', () => call('/login', { username, password }));
       const doSave = () => run('save', () => call('/save', { username, password }));
@@ -539,7 +546,14 @@ window.__ModuleLoader__.load({
           ] }),
           jsx('div', { className: 'hn-row', key: 'model', children: [
             jsx('span', { className: 'hn-k', children: '模型' }),
-            jsx('span', { className: 'hn-v mono', key: 'v', children: models.length > 0 ? models.join(', ') : '未获取' }),
+            jsx('span', { className: 'hn-v mono', key: 'v', children: models.length > 0
+              ? `${models.length} 个（自部署 ${countOf('海师自部署')} · 阿里云 ${countOf('海师阿里云')}）`
+              : '未获取' }),
+          ] }),
+          portalStatus === null ? null : jsx('div', { className: 'hn-row', key: 'portal', children: [
+            jsx('span', { className: 'hn-k', children: '海师大智汇' }),
+            portalStatus.loggedIn === true ? badge('已连接', 'ok') : badge('未连接', 'off'),
+            jsx('span', { className: 'hn-v', key: 'v', children: portalStatus.error ? String(portalStatus.error) : '阿里云百炼 · 3 个模型' }),
           ] }),
         ] }),
       ] }));
@@ -639,7 +653,10 @@ window.__ModuleLoader__.load({
         jsx('div', { className: 'hn-sep', key: 's2' }),
         jsx('div', { className: 'hn-models', key: 'ml', children: models.length === 0
           ? jsx('span', { className: 'hn-note', children: '还没有拿到模型列表，登录后可点「刷新模型」' })
-          : models.map((id) => jsx('span', { className: 'hn-chip' + (id === activeModel ? ' on' : ''), children: id }, id)) }),
+          : models.map((id) => jsx('span', { className: 'hn-chip' + (id === activeModel ? ' on' : ''), children: [
+            jsx('span', { key: 'n', children: id }),
+            sourceOf(id) === '' ? null : jsx('span', { className: 'hn-src', key: 's', children: ' ' + sourceOf(id) }),
+          ] }, id)) }),
         security !== null && security.apiAuth === 'locked'
           ? jsx('div', { className: 'hn-alert err', key: 'locked', style: { marginTop: '10px' }, children:
               '本地代理没有可用的 API Key，已拒绝所有调用。请在插件配置里设置 localApiKey（或显式 allowAnonymous: true）。' })
