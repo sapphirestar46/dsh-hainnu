@@ -131,6 +131,13 @@ ok('代理模型清单合并两个上游', () => {
   assert.equal(buildToolPrompt([]), '');
   assert.equal(buildToolPrompt([{ type: 'text' }]), '');
 
+  // DSH 实际发的是扁平形状，也要认
+  const flatPrompt = buildToolPrompt([
+    { name: 'run_code', description: '执行 TypeScript', parameters: { type: 'object', properties: { code: { type: 'string' } } } },
+  ]);
+  assert.match(flatPrompt, /- run_code：执行 TypeScript/);
+  assert.match(flatPrompt, /"code"/);
+
   assert.deepEqual(parseToolCall('<tool_call>{"name":"read","arguments":{"path":"a"}}</tool_call>'), {
     name: 'read',
     arguments: '{"path":"a"}',
