@@ -39,10 +39,11 @@ const REPO_RELEASES = `https://github.com/${REPO}/releases`;
 const REPO_LATEST_API = `https://api.github.com/repos/${REPO}/releases/latest`;
 /**
  * 更新检查的数据源。国内直连 api.github.com 经常超时，所以按顺序回退：
- *   1. GitHub API（最准，能拿到 release 说明）
- *   2. jsDelivr CDN 读仓库里的 package.json（国内一般可达，不带 GitHub API 限流）
- *   3. fastly 镜像的 jsDelivr
- * 三个都失败就明确报错，面板给一个 Releases 链接让用户手动看。
+ *   1. GitHub API releases/latest —— 最准，还能拿到 release 标题与时间
+ *   2. data.jsdelivr.com 的版本列表 —— 按 tag 列，发布后立刻能看到（不像 @main 有分支缓存）
+ *   3. cdn.jsdelivr.net 读 @main 的 package.json —— 兜底，可能滞后几小时
+ *   4. fastly 镜像的同一条
+ * 全部失败就明确报错，面板给一个 Releases 链接让用户手动看。
  */
 const UPDATE_SOURCES = [
   {
@@ -57,7 +58,18 @@ const UPDATE_SOURCES = [
     }),
   },
   {
-    name: 'jsdelivr',
+    name: 'jsdelivr-data',
+    url: `https://data.jsdelivr.com/v1/packages/gh/${REPO}`,
+    timeoutMs: 6000,
+    parse: (json) => {
+      const versions = Array.isArray(json && json.versions) ? json.versions : [];
+      const list = versions.map((item) => String((item && item.version) || '').replace(/^v/i, '')).filter((value) => value !== '');
+      list.sort((a, b) => compareVersion(b, a));
+      return { latest: list[0] || '', url: REPO_RELEASES, name: '', publishedAt: '' };
+    },
+  },
+  {
+    name: 'jsdelivr-cdn',
     url: `https://cdn.jsdelivr.net/gh/${REPO}@main/package.json`,
     timeoutMs: 6000,
     parse: (json) => ({ latest: String(json.version || ''), url: REPO_RELEASES, name: '', publishedAt: '' }),

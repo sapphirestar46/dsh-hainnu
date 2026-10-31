@@ -82,18 +82,20 @@ ln -s "<插件目录>" ~/.dsh/profiles/desktop/node_modules/dsh-hainnu
 
 面板「状态」卡片里有一行**版本**：显示当前版本，并自动检查仓库有没有新版本。
 
-考虑到国内直连 GitHub 经常超时，检查会按顺序回退三个源：
+考虑到国内直连 GitHub 经常超时，检查会按顺序回退四个源：
 
-| 顺序 | 源 | 说明 |
-|---|---|---|
-| 1 | `api.github.com/.../releases/latest` | 最准，还能拿到 release 标题与时间 |
-| 2 | `cdn.jsdelivr.net/gh/<repo>@main/package.json` | jsDelivr CDN，国内一般可达 |
-| 3 | `fastly.jsdelivr.net/...` | jsDelivr 的 fastly 镜像 |
+| 顺序 | 源 | 说明 | 实测 |
+|---|---|---|---|
+| 1 | `api.github.com/.../releases/latest` | 最准，还能拿到 release 标题与时间 | 1s ✅ |
+| 2 | `data.jsdelivr.com/v1/packages/gh/<repo>` | 列 tag，发版后立刻可见 | 1s ✅ |
+| 3 | `cdn.jsdelivr.net/gh/<repo>@main/package.json` | CDN 读默认分支，可能滞后几小时 | 暂时偏旧 |
+| 4 | `fastly.jsdelivr.net/...` | jsDelivr 的 fastly 镜像 | 兜底 |
 
 三个都失败时，面板会显示「检查更新失败，手动查看 ↗」，点开就是 Releases 页。
 宿主侧有 10 分钟缓存，不会频繁打网络；想强制刷新可以访问 `/dsh-hainnu/check-update?force=1`。
 
-> jsDelivr 读取的是默认分支且带缓存，刚推的版本可能要过一会儿才能在镜像里看到。
+> 源 2 用的是 jsDelivr 的版本列表接口，**发版后立刻能看到**；源 3 读的是默认分支、带缓存，可能滞后几小时，只作兜底。
+
 ## 使用
 
 面板从上到下：
