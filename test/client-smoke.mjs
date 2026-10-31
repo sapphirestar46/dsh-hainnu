@@ -172,6 +172,23 @@ check('样式表只用主题 token，不含写死颜色', () => {
   assert.equal(/rgba?\(/.test(css), false, '出现了写死的 rgb() 颜色');
 });
 
+check('热力图：固定窗口、无横向滚动、绿色刻度', () => {
+  const css = mod.CSS || '';
+  // 不再有可横向滚动的容器
+  assert.equal(/hn-heat-scroll/.test(css), false, '仍然存在横向滚动容器');
+  assert.match(css, /\.hn-heat-wrap \{[^}]*overflow: hidden/);
+  // 列数由容器宽度算出，最新一天贴右
+  assert.match(css, /grid-template-columns: repeat\(var\(--cols/);
+  assert.match(css, /\.hn-heat \{[^}]*justify-content: end/);
+  // 热度用绿色，不是品牌蓝/灰度
+  for (const level of ['l1', 'l2', 'l3', 'l4']) {
+    const rule = new RegExp('\\.hn-cell\\.' + level + ' \\{([^}]*)\\}');
+    const match = css.match(rule);
+    assert.ok(match !== null, '缺少 ' + level + ' 规则');
+    assert.match(match[1], /state-success-primary/, level + ' 不是绿色');
+  }
+});
+
 check('ENDPOINT 指向宿主挂载前缀', () => {
   assert.equal(mod.ENDPOINT, '/dsh-hainnu');
 });

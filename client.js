@@ -148,18 +148,20 @@ window.__ModuleLoader__.load({
 .hn-tab:hover { color: var(--dsw-alias-label-primary); }
 .hn-tab.on { background: var(--dsw-alias-settings-card-fill); color: var(--dsw-alias-label-primary);
   box-shadow: var(--dsw-elevation-panel); }
-.hn-heat-scroll { overflow-x: auto; }
-.hn-heat { display: grid; grid-auto-flow: column; grid-auto-columns: 10px;
-  grid-template-rows: repeat(7, 10px); gap: 3px; min-width: max-content; }
+/* 固定窗口：列数按容器宽度算，不出现横向滚动条；最新的一天永远贴右边 */
+.hn-heat-wrap { width: 100%; overflow: hidden; }
+.hn-heat { display: grid; grid-auto-flow: column; gap: 3px; justify-content: end;
+  grid-template-columns: repeat(var(--cols, 26), 10px); grid-template-rows: repeat(7, 10px); }
 .hn-cell { width: 10px; height: 10px; border-radius: 2px; background: var(--dsw-alias-fill-l1); }
-.hn-cell.l1 { background: var(--dsw-alias-brand-primary); opacity: .28; }
-.hn-cell.l2 { background: var(--dsw-alias-brand-primary); opacity: .48; }
-.hn-cell.l3 { background: var(--dsw-alias-brand-primary); opacity: .72; }
-.hn-cell.l4 { background: var(--dsw-alias-brand-primary); opacity: 1; }
+/* 用量热度用绿色：越忙越深 */
+.hn-cell.l1 { background: var(--dsw-alias-state-success-primary); opacity: .22; }
+.hn-cell.l2 { background: var(--dsw-alias-state-success-primary); opacity: .45; }
+.hn-cell.l3 { background: var(--dsw-alias-state-success-primary); opacity: .70; }
+.hn-cell.l4 { background: var(--dsw-alias-state-success-primary); opacity: 1; }
 .hn-heat-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px;
   margin-top: 8px; font-size: 11px; color: var(--dsw-alias-label-tertiary); }
-.hn-axis { display: grid; grid-auto-flow: column; grid-auto-columns: 10px; gap: 3px;
-  margin-top: 6px; min-width: max-content; }
+.hn-axis { display: grid; gap: 3px; margin-top: 6px; justify-content: end;
+  grid-template-columns: repeat(var(--cols, 26), 10px); }
 .hn-axis > span { font-size: 10.5px; line-height: 1; color: var(--dsw-alias-label-tertiary);
   white-space: nowrap; }
 .hn-legend { display: flex; align-items: center; gap: 3px; }
@@ -323,24 +325,79 @@ window.__ModuleLoader__.load({
      * 用量面板：上面是 Codex 风格的五格统计条，下面是 Token 活动热力图。
      * 只统计经过本插件代理的请求；颜色全部走主题 token，深浅色自动跟随。
      */
+    /** 本地日期 → YYYY-MM-DD */
+    function dayKey(date) {
+      return date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0') + '-' + String(date.getDate()).padStart(2, '0');
+    }
+
+    function parseDay(value) {
+      const parts = String(value === undefined || value === null ? '' : value).slice(0, 10).split('-');
+      if (parts.length !== 3) return null;
+      const date = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+      return Number.isFinite(date.getTime()) ? date : null;
+    }
+
+    const HEAT_CELL = 10;
+    const HEAT_GAP = 3;
+
     function UsagePanels(props) {
       const usage = props !== null && props !== undefined && props.usage !== null && typeof props.usage === 'object'
         ? props.usage
         : null;
       const [mode, setMode] = react.useState('day');
-      const series = usage !== null && Array.isArray(usage.series) ? usage.series : [];
-      const levels = heatLevels(heatValues(series, mode));
+      const [width, setWidth] = react.useState(0);
+      const wrapRef = react.useRef(null);
 
-      const cells = [];
-      const first = series.length > 0 ? new Date(String(series[0].date) + 'T00:00:00') : null;
-      const pad = first !== null && Number.isFinite(first.getTime()) ? first.getDay() : 0;
-      for (let i = 0; i < pad; i += 1) cells.push(jsx('div', { className: 'hn-cell', key: 'pad-' + i }));
-      for (let i = 0; i < levels.length; i += 1) {
-        cells.push(jsx('div', {
-          className: 'hn-cell' + (levels[i] > 0 ? ' l' + levels[i] : ''),
-          key: 'c-' + i,
-          title: String(series[i].date) + '：' + fmtTokens(series[i].tokens),
-        }));
+      // 量一次可用宽度：列数由宽度决定，因此不会出现横向滚动条。
+      react.useEffect(() => {
+        const node = wrapRef.current;
+        if (node === null || node === undefined || typeof node.clientWidth !== 'number') return undefined;
+        const update = () => setWidth(node.clientWidth || 0);
+        update();
+        if (typeof ResizeObserver === 'function') {
+          const observer = new ResizeObserver(update);
+          observer.observe(node);
+          return () => observer.disconnect();
+        }
+        return undefined;
+      }, []);
+
+      const series = usage !== null && Array.isArray(usage.series) ? usage.series : [];
+      const cols = width > 0
+        ? Math.max(8, Math.min(53, Math.floor((width + HEAT_GAP) / (HEAT_CELL + HEAT_GAP))))
+        : 26;
+
+      // 把序列按日期索引，再取「截至最近一天」的固定天数窗口 —— 日期前进时窗口自动右移。
+      const values = heatValues(series, mode);
+      const byDate = new Map();
+      for (let i = 0; i < series.length; i += 1) {
+        const key = String(series[i].date === undefined ? '' : series[i].date).slice(0, 10);
+        if (key !== '') byDate.set(key, Number(values[i]) || 0);
+      }
+      const lastDay = series.length > 0 ? parseDay(series[series.length - 1].date) : null;
+      const end = lastDay === null ? new Date() : lastDay;
+      const endWeekday = end.getDay();
+      // 从某个周日开始，最后一列到「最近一天」为止，总共 cols 列
+      const totalDays = (cols - 1) * 7 + endWeekday + 1;
+      const start = new Date(end.getTime());
+      start.setDate(end.getDate() - (totalDays - 1));
+      const days = [];
+      for (let i = 0; i < totalDays; i += 1) {
+        const day = new Date(start.getTime());
+        day.setDate(start.getDate() + i);
+        days.push(day);
+      }
+      const windowValues = days.map((day) => byDate.get(dayKey(day)) || 0);
+      const levels = heatLevels(windowValues);
+
+      const cells = days.map((day, index) => jsx('div', {
+        className: 'hn-cell' + (levels[index] > 0 ? ' l' + levels[index] : ''),
+        key: 'c-' + dayKey(day),
+        title: dayKey(day) + '：' + fmtTokens(windowValues[index]),
+      }));
+      // 最后一列不足 7 天时补隐形格子，保证每列都是周日→周六
+      for (let i = endWeekday + 1; i < 7; i += 1) {
+        cells.push(jsx('div', { className: 'hn-cell', key: 'pad-' + i, style: { visibility: 'hidden' } }));
       }
 
       const stats = [
@@ -351,26 +408,22 @@ window.__ModuleLoader__.load({
         ['当前连续天数', (Number(usage !== null ? usage.currentStreak : 0) || 0) + ' 天'],
       ];
       const tabs = [['day', '每天'], ['week', '每周'], ['total', '累计总量']];
-      const rangeText = series.length > 0 ? '近 12 个月' : '';
+      const rangeText = series.length > 0 ? `近 ${totalDays} 天（截至 ${end.getMonth() + 1}/${end.getDate()}）` : '';
 
-      // 底部月份刻度：只在月份变化处打点，且至少隔 4 列，避免拥挤。
-      const axis = [];
-      let lastMonth = '';
-      let lastCol = -99;
-      for (let i = 0; i < series.length; i += 1) {
-        const month = String(series[i].date).slice(0, 7);
-        if (month === lastMonth) continue;
-        const col = Math.floor((pad + i) / 7) + 1;
-        if (col - lastCol >= 4) {
-          axis.push(jsx('span', {
-            key: 't-' + col,
-            style: { gridColumnStart: col },
-            children: Number(month.slice(5, 7)) + ' 月',
-          }));
-          lastCol = col;
+      // 底部月份刻度：只在「月份变了」的那一列打标。
+      // 开头那个不完整的月份不标，避免出现「5 月 7 月」这种跳月。
+      const labels = new Array(cols).fill('');
+      let prevMonth = days[0] !== undefined ? days[0].getFullYear() + '-' + (days[0].getMonth() + 1) : '';
+      for (let col = 1; col < cols; col += 1) {
+        const first = days[col * 7];
+        if (first === undefined) continue;
+        const month = first.getFullYear() + '-' + (first.getMonth() + 1);
+        if (month !== prevMonth) {
+          labels[col] = (first.getMonth() + 1) + ' 月';
+          prevMonth = month;
         }
-        lastMonth = month;
       }
+      const axis = labels.map((label, col) => jsx('span', { key: 'm-' + col, children: label }));
 
       return jsx('div', { className: 'hn-usage', children: [
         jsx('div', {
@@ -401,8 +454,10 @@ window.__ModuleLoader__.load({
             }),
           ] }),
           jsx('div', {
-            className: 'hn-heat-scroll',
+            className: 'hn-heat-wrap',
             key: 's',
+            ref: wrapRef,
+            style: { '--cols': cols },
             children: [
               jsx('div', { className: 'hn-heat', key: 'g', children: cells }),
               jsx('div', { className: 'hn-axis', key: 'a', children: axis }),
