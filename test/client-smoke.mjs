@@ -132,10 +132,10 @@ check('注册了 main、sidebar.panellist 和 composer 模型标签三个 slot',
 check('composer 模型标签：海师模型挂 1017 角标，其它模型原样返回', () => {
   const local = mod.ComposerModelLabel({
     provider: { id: 'hainnu' },
-    model: { id: 'deepseek-flash', name: 'DeepSeek V4.1 Flash 1017 (海师自部署)' },
+    model: { id: 'deepseek-flash', name: 'DeepSeek V4.1 Flash 1017 (海师网关)' },
   });
   const text = JSON.stringify(local);
-  assert.match(text, /DeepSeek V4\.1 Flash \(海师自部署\)/);
+  assert.match(text, /DeepSeek V4\.1 Flash \(海师网关\)/);
   assert.match(text, /1017/);
   // 用 DSH 原生 Tag（浅蓝 info 气泡）的兜底样式，不能再是自定义灰底
   assert.match(text, /hn-pill/);
@@ -280,7 +280,7 @@ check('更新气泡：原生 Tag 同款浅蓝底，侧栏注入且点击打开�
     security: { allowRemote: false, allowAnonymous: false, apiAuth: 'keys', loginGuard: {}, originGuard: true },
     usage: null,
     models: [
-      { id: 'deepseek-flash', name: 'DeepSeek V4.1 Flash 1017 (海师自部署)', source: '海师自部署', build: '1017', contextWindow: 300000, maxTokens: 80000, requestLimitBytes: 1048576, requestLimitLabel: '1 MB', tools: 'native', vision: true, summary: '唯一能看图的模型', notes: ['支持图片输入'] },
+      { id: 'deepseek-flash', name: 'DeepSeek V4.1 Flash 1017 (海师网关)', source: '海师网关', build: '1017', contextWindow: 300000, maxTokens: 80000, requestLimitBytes: 1048576, requestLimitLabel: '1 MB', tools: 'native', vision: true, summary: '唯一能看图的模型', notes: ['支持图片输入'] },
       { id: 'kimi-k3', name: 'Kimi K3 (海师阿里云)', source: '海师阿里云', contextWindow: 1000000, maxTokens: 8192, tools: 'emulated', vision: false, summary: '偏思考的重型模型', notes: ['不支持图片'] },
     ],
   };
@@ -305,11 +305,11 @@ check('更新气泡：原生 Tag 同款浅蓝底，侧栏注入且点击打开�
   assert.match(text, /支持图片/);
   assert.match(text, /原生工具调用/);
   assert.match(text, /模拟工具调用/);
-  // 自部署那个要标「请求体上限 1 MB」，不能写成上下文
+  // 海师网关那个要标「请求体上限 1 MB」，不能写成上下文
   assert.match(text, /请求体上限 1 MB/);
   // 1017 发行标（与 DSH 官方徽标对齐）
   assert.match(text, /hn-tag build/);
-  assert.equal(/上下文 300,000/.test(text), false, '自部署模型不该显示成上下文上限');
+  assert.equal(/上下文 300,000/.test(text), false, '海师网关模型不该显示成上下文上限');
   results.push(['PASS', '可用模型卡片渲染出简介与能力标签']);
 }
 

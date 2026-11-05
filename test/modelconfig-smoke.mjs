@@ -64,7 +64,7 @@ const LLM_ENTRY = `- id: llm-pi-ai
         baseURL: http://127.0.0.1:8787/v1
         models:
           - id: deepseek-flash
-            name: DeepSeek V4.1 Flash (海师自部署)
+            name: DeepSeek V4.1 Flash (海师网关)
             contextWindow: 300000
             maxTokens: 80000
             input:
@@ -159,14 +159,14 @@ check('旧显示名会迁移到新标注', () => {
       file,
       LLM_ENTRY
         .replace('displayName: 海南师范大学', 'displayName: DeepSeek V4.1 Flash (海师)')
-        .replace('name: DeepSeek V4.1 Flash (海师自部署)', 'name: DeepSeek V4.1 Flash (海师)'),
+        .replace('name: DeepSeek V4.1 Flash (海师网关)', 'name: DeepSeek V4.1 Flash (海师)'),
       'utf8',
     );
     const result = ensureModelConfig({
       patchPath: file,
       providerId: 'hainnu',
       modelId: 'deepseek-flash',
-      modelName: 'DeepSeek V4.1 Flash (海师自部署)',
+      modelName: 'DeepSeek V4.1 Flash (海师网关)',
       legacyNames: ['DeepSeek V4.1 Flash (海师)'],
       baseURL: 'http://127.0.0.1:8787/v1',
       contextWindow: 300000,
@@ -174,7 +174,7 @@ check('旧显示名会迁移到新标注', () => {
     });
     const text = readFileSync(file, 'utf8');
     assert.match(text, /displayName: 海南师范大学/);
-    assert.match(text, /name: DeepSeek V4.1 Flash \(海师自部署\)/);
+    assert.match(text, /name: DeepSeek V4.1 Flash \(海师网关\)/);
     assert.equal(result.changed, true);
   } finally {
     rmSync(dir, { recursive: true, force: true });

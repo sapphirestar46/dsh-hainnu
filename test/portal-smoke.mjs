@@ -85,7 +85,7 @@ ok('模型目录：四个模型，两个来源', () => {
   assert.equal(list.filter((m) => m.upstream === 'portal').length, 3);
   for (const model of PORTAL_MODELS) assert.match(model.name, /海师阿里云/);
   const local = modelById('deepseek-flash');
-  assert.match(local.name, /海师自部署/);
+  assert.match(local.name, /海师网关/);
   // 和 DSH 官方给 DeepSeek Flash 挂的 1017 发行标对齐
   assert.equal(local.build, '1017');
   assert.match(local.name, /1017/);

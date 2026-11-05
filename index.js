@@ -1,6 +1,6 @@
 /**
  * dsh-hainnu —— 在 DSH 里登录海师（海南师范大学）账号，并把学校的
- * Open WebUI 模型接成 DSH 的 provider。
+ * 学校网关的模型接成 DSH 的 provider。
  *
  * Host 半边只做三件事：
  *   1. 在 /dsh-hainnu 上开一组 HTTP 接口，给左侧栏面板用；
@@ -33,7 +33,7 @@ export const name = 'dsh-hainnu';
 export const inject = ['webServer'];
 
 const ROUTE_PREFIX = '/dsh-hainnu';
-const VERSION = '0.2.2';
+const VERSION = '0.2.3';
 const REPO = 'sapphirestar46/dsh-hainnu';
 const REPO_RELEASES = `https://github.com/${REPO}/releases`;
 const REPO_LATEST_API = `https://api.github.com/repos/${REPO}/releases/latest`;
@@ -437,10 +437,12 @@ export function apply(ctx, config) {
       apiKey: settings.localApiKey,
       modelId: settings.modelId,
       modelName: LOCAL_MODEL.name,
-      // 显示名迁移：旧名字（含上一版「(海师自部署)」）都会被换成带 1017 的新名字。
+      // 显示名迁移：历史显示名都会换成新的「(海师网关)」。
+      // 这里必须保留旧字符串原文，才能匹配到已经写进配置的老名字。
       legacyNames: [
         'DeepSeek V4.1 Flash (海师)',
         'DeepSeek V4.1 Flash (海师自部署)',
+        'DeepSeek V4.1 Flash 1017 (海师自部署)',
         // 下面这条是上一版误加的：如果已经被写进配置，这里负责改回来
         'DeepSeek V4.1 Flash 1017 (海师阿里云)',
       ],

@@ -134,8 +134,8 @@ window.__ModuleLoader__.load({
 .hn-tag.warn { color: var(--dsw-alias-state-warn-primary); border-color: currentColor; }
 .hn-tag.off { color: var(--dsw-alias-label-tertiary); }
 .hn-tag.hi { color: var(--dsw-alias-brand-primary); border-color: currentColor; }
-.hn-tag.build { font-weight: 600; color: var(--dsw-alias-brand-primary); border-color: transparent;
-  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 14%, var(--dsw-alias-settings-card-fill)); }
+.hn-tag.build { font-weight: 600; color: var(--dsw-alias-state-business-primary); border-color: transparent;
+  background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 10%, transparent); }
 /* 与 DSH 原生 Tag 同款的浅色气泡（数据里 tone=info 就是内置 1017 角标的浅蓝底）。
    原生组件可用时优先用原生组件，这段是兜底，样式逐像素照抄内置 .tag。 */
 .hn-pill { display: inline-flex; align-items: center; border-radius: 999px; corner-shape: round;
@@ -833,7 +833,7 @@ window.__ModuleLoader__.load({
       const activeModel = String(endpoint.modelId || '');
       const portalStatus = status !== null && status.portal !== null && status.portal !== undefined ? status.portal : null;
       const sourceOf = (id) =>
-        id === 'deepseek-flash' ? '海师自部署'
+        id === 'deepseek-flash' ? '海师网关'
           : id === 'kimi-k3' || id === 'qwen3.8-flash' || id === 'deepseek-v4.1-flash' ? '海师阿里云'
             : '';
       const countOf = (label) => models.filter((id) => sourceOf(id) === label).length;
@@ -912,7 +912,7 @@ window.__ModuleLoader__.load({
           jsx('div', { className: 'hn-row', key: 'model', children: [
             jsx('span', { className: 'hn-k', children: '模型' }),
             jsx('span', { className: 'hn-v mono', key: 'v', children: models.length > 0
-              ? `${models.length} 个（自部署 ${countOf('海师自部署')} · 阿里云 ${countOf('海师阿里云')}）`
+              ? `${models.length} 个（海师网关 ${countOf('海师网关')} · 阿里云 ${countOf('海师阿里云')}）`
               : '未获取' }),
           ] }),
           portalStatus === null ? null : jsx('div', { className: 'hn-row', key: 'portal', children: [
@@ -992,7 +992,7 @@ window.__ModuleLoader__.load({
                   : String(item.name || item.id || ''),
               }),
               item.build ? jsx('span', { className: 'hn-tag build', key: 'b', children: String(item.build) }) : null,
-              item.source ? jsx('span', { className: 'hn-tag' + (String(item.source).includes('自部署') ? ' hi' : ''), key: 's', children: String(item.source) }) : null,
+              item.source ? jsx('span', { className: 'hn-tag' + (String(item.source).includes('阿里云') ? '' : ' hi'), key: 's', children: String(item.source) }) : null,
             ] }),
             jsx('div', { className: 'hn-model-meta', key: 'm', children: [
               jsx('span', { key: 'id', className: 'mono', children: String(item.id || '') }),
@@ -1144,7 +1144,7 @@ window.__ModuleLoader__.load({
      * 槽位给到的 props 是 { provider, model, t }；不认识的模型原样返回 model.name，
      * 这样即使我们的注册把内置插件顶掉，官方模型的角标也照旧。
      */
-    // 只给有明文依据的模型挂角标：自部署那个上游就是 V4.1-Flash-1017 构建。
+    // 只给有明文依据的模型挂角标：海师网关给出的模型 id 是 deepseek-flash，官方规格对应 V4.1-Flash-1017。
     // 阿里云那个拿不到版本信息，不挂。
     const LABEL_BUILD = { 'deepseek-flash': '1017' };
 
